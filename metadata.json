@@ -1,0 +1,5 @@
+{
+  "name": "ReservationInsiderPro",
+  "description": "An AI-powered analytics dashboard for appointment trading, identifying high-value restaurant reservations and generating sales strategies.",
+  "requestFramePermissions": []
+}
