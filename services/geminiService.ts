@@ -102,17 +102,19 @@ export const fetchMarketInsight = async (restaurantName: string, city: string): 
       contents: `Analyze the trading strategy for "${restaurantName}" in ${city}.
       
       TARGETED SOURCES:
-      - site:reddit.com (Search for "how to book ${restaurantName}", "tips", "release time")
-      - site:appointmenttrader.com (Search for "wanted" listings)
-      - site:eater.com (Search for "how to get into ${restaurantName}")
+      - site:resy.com "${restaurantName}"
+      - site:exploretock.com "${restaurantName}"
+      - site:reddit.com (Search for "release time", "how to book")
 
-      Identify the exact moment inventory is released and the platform used.
-      
+      Find the Drop Time (e.g. 9:00 AM) and the official booking URL.
+
       Return JSON:
       - strategy (string, tactical advice)
       - peakTimes (array of strings)
-      - platform (string)
+      - platform (string, e.g. "Resy", "Tock")
       - riskFactor (string)
+      - releaseTime (string, HH:MM 24h format e.g. "09:00". If unknown, guess "09:00")
+      - bookingUrl (string, the direct url to the restaurant's booking page)
       
       Return ONLY the JSON object.`,
       config: {

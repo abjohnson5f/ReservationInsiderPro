@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PortfolioItem, AssetStatus } from '../types';
 import { 
   Briefcase, 
@@ -7,28 +7,37 @@ import {
   Clock, 
   CheckCircle2, 
   MessageSquare, 
-  ArrowRightLeft,
+  AlertCircle,
   X,
   Save,
   Plus,
   Wallet,
   ChevronDown,
-  Copy
+  Copy,
+  HelpCircle,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 
 interface PortfolioManagerProps {
   items: PortfolioItem[];
   onUpdateItem: (item: PortfolioItem) => void;
   onAddItem: (item: PortfolioItem) => void;
+  onDeleteItem: (itemId: string) => void;
 }
 
-const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem, onAddItem }) => {
+const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem, onAddItem, onDeleteItem }) => {
   const [selectedItem, setSelectedItem] = useState<PortfolioItem | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSoldModal, setShowSoldModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [soldPriceInput, setSoldPriceInput] = useState<number>(0);
   const [itemToSell, setItemToSell] = useState<PortfolioItem | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<PortfolioItem | null>(null);
+  
+  // State for dropdowns
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
   // Form State for New Asset
   const [newAsset, setNewAsset] = useState<Partial<PortfolioItem>>({
@@ -46,9 +55,15 @@ const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem
   const totalRevenue = items.reduce((acc, item) => acc + (item.soldPrice || 0), 0);
   const totalCost = items.reduce((acc, item) => acc + item.costBasis, 0);
   const netProfit = totalRevenue - totalCost;
+  // Only count assets we actually OWN (Acquired or Listed) in the inventory value
   const activeValue = items
     .filter(i => i.status === 'LISTED' || i.status === 'ACQUIRED')
     .reduce((acc, i) => acc + i.listPrice, 0);
+
+  const toggleDropdown = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOpenDropdownId(openDropdownId === id ? null : id);
+  };
 
   const handleOpenTransfer = (item: PortfolioItem) => {
     setSelectedItem(item);
@@ -56,7 +71,10 @@ const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem
   };
 
   const handleStatusChange = (item: PortfolioItem, newStatus: AssetStatus) => {
-    if (newStatus === 'SOLD') {
+    setOpenDropdownId(null); // Close dropdown
+    
+    // If moving to PENDING or SOLD, and no price is set, ask for it
+    if ((newStatus === 'PENDING' || newStatus === 'SOLD') && !item.soldPrice) {
       setItemToSell(item);
       setSoldPriceInput(item.listPrice); // Default to list price
       setShowSoldModal(true);
@@ -64,13 +82,44 @@ const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem
       onUpdateItem({ ...item, status: newStatus });
     }
   };
+  
+  const [targetStatus, setTargetStatus] = useState<AssetStatus>('SOLD');
+
+  const handleStatusClick = (item: PortfolioItem, status: AssetStatus) => {
+      setOpenDropdownId(null);
+      if ((status === 'PENDING' || status === 'SOLD') && !item.soldPrice) {
+          setItemToSell(item);
+          setTargetStatus(status);
+          setSoldPriceInput(item.listPrice);
+          setShowSoldModal(true);
+      } else {
+          onUpdateItem({ ...item, status });
+      }
+  }
 
   const confirmSale = () => {
     if (itemToSell) {
-      onUpdateItem({ ...itemToSell, status: 'SOLD', soldPrice: soldPriceInput });
+      onUpdateItem({ 
+          ...itemToSell, 
+          status: targetStatus, 
+          soldPrice: soldPriceInput 
+      });
       setShowSoldModal(false);
       setItemToSell(null);
     }
+  };
+
+  const handleDeleteClick = (item: PortfolioItem) => {
+      setItemToDelete(item);
+      setShowDeleteModal(true);
+  };
+
+  const confirmDelete = () => {
+      if (itemToDelete) {
+          onDeleteItem(itemToDelete.id);
+          setShowDeleteModal(false);
+          setItemToDelete(null);
+      }
   };
 
   const handleSaveAsset = (e: React.FormEvent) => {
@@ -106,8 +155,10 @@ const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem
 
   const getStatusColor = (status: AssetStatus) => {
     switch (status) {
+      case 'WATCHING': return 'bg-slate-800 border-slate-600 text-slate-400 border-dashed';
       case 'ACQUIRED': return 'bg-slate-800 text-slate-300 border-slate-700';
       case 'LISTED': return 'bg-amber-900/30 text-amber-400 border-amber-900/50';
+      case 'PENDING': return 'bg-indigo-900/30 text-indigo-400 border-indigo-900/50';
       case 'SOLD': return 'bg-emerald-900/30 text-emerald-400 border-emerald-900/50';
       case 'TRANSFERRED': return 'bg-purple-900/30 text-purple-400 border-purple-900/50';
     }
@@ -122,7 +173,7 @@ Please update the host notes accordingly. Thank you.`;
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" onClick={() => setOpenDropdownId(null)}>
       {/* Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex flex-col">
@@ -145,7 +196,7 @@ Please update the host notes accordingly. Thank you.`;
           </div>
         </div>
         <div 
-            onClick={() => setShowAddModal(true)}
+            onClick={(e) => { e.stopPropagation(); setShowAddModal(true); }}
             className="bg-emerald-900/10 p-4 rounded-xl border border-emerald-900/30 flex items-center justify-center cursor-pointer hover:bg-emerald-900/20 transition-colors group"
         >
             <div className="flex flex-col items-center">
@@ -163,7 +214,7 @@ Please update the host notes accordingly. Thank you.`;
             Portfolio Holdings
           </h3>
         </div>
-        <div className="overflow-x-auto pb-24"> {/* Extra padding for dropdowns */}
+        <div className="overflow-x-auto pb-24"> 
           <table className="w-full text-left text-sm text-slate-400">
             <thead className="bg-slate-950 text-xs uppercase font-medium text-slate-500">
               <tr>
@@ -171,7 +222,16 @@ Please update the host notes accordingly. Thank you.`;
                 <th className="px-6 py-4">Details</th>
                 <th className="px-6 py-4">Cost Basis</th>
                 <th className="px-6 py-4">List Price</th>
-                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4 flex items-center gap-2">
+                    Status
+                    <div className="group/tooltip relative">
+                        <HelpCircle className="w-3.5 h-3.5 text-slate-600 cursor-help" />
+                        <div className="absolute left-0 top-full mt-2 w-56 bg-slate-950 border border-slate-800 p-3 rounded shadow-xl text-[10px] text-slate-300 z-50 hidden group-hover/tooltip:block pointer-events-none normal-case leading-relaxed">
+                            <span className="block mb-1"><strong className="text-indigo-400">PENDING:</strong> Buyer paid. Transfer needed immediately.</span>
+                            <span className="block"><strong className="text-emerald-400">SOLD:</strong> Name change complete. Deal closed.</span>
+                        </div>
+                    </div>
+                </th>
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -198,13 +258,14 @@ Please update the host notes accordingly. Thank you.`;
                   <td className="px-6 py-4 font-mono text-slate-300">
                       <input 
                         type="number" 
+                        onClick={(e) => e.stopPropagation()}
                         className="bg-transparent w-20 border-b border-transparent hover:border-slate-600 focus:border-emerald-500 outline-none"
                         value={item.costBasis}
                         onChange={(e) => onUpdateItem({...item, costBasis: parseFloat(e.target.value) || 0})}
                       />
                   </td>
                   <td className="px-6 py-4 font-mono text-white">
-                    {item.status === 'SOLD' ? (
+                    {(item.status === 'SOLD' || item.status === 'TRANSFERRED' || item.status === 'PENDING') && item.soldPrice ? (
                         <span className="text-emerald-400 flex items-center gap-1">
                             ${item.soldPrice} <CheckCircle2 className="w-3 h-3" />
                         </span>
@@ -212,37 +273,54 @@ Please update the host notes accordingly. Thank you.`;
                         <span>${item.listPrice}</span>
                     )}
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="relative group/status inline-block">
-                        <button className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase border ${getStatusColor(item.status)} hover:brightness-110`}>
+                  <td className="px-6 py-4 relative">
+                    <div className="inline-block">
+                        <button 
+                            onClick={(e) => toggleDropdown(item.id, e)}
+                            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold uppercase border ${getStatusColor(item.status)} hover:brightness-110 transition-all`}
+                        >
                             {item.status}
                             <ChevronDown className="w-3 h-3" />
                         </button>
                         
-                        {/* Dropdown Menu */}
-                        <div className="absolute left-0 top-full mt-1 w-32 bg-slate-950 border border-slate-700 rounded shadow-xl z-50 hidden group-hover/status:block">
-                            {['ACQUIRED', 'LISTED', 'SOLD', 'TRANSFERRED'].map((s) => (
-                                <button
-                                    key={s}
-                                    onClick={() => handleStatusChange(item, s as AssetStatus)}
-                                    className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white"
-                                >
-                                    {s}
-                                </button>
-                            ))}
-                        </div>
+                        {/* Dropdown Menu - Click Triggered */}
+                        {openDropdownId === item.id && (
+                            <div className="absolute left-6 top-10 mt-1 w-36 bg-slate-950 border border-slate-700 rounded shadow-xl z-50 animate-in fade-in zoom-in-95 duration-100">
+                                {['WATCHING', 'ACQUIRED', 'LISTED', 'PENDING', 'SOLD', 'TRANSFERRED'].map((s) => (
+                                    <button
+                                        key={s}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleStatusClick(item, s as AssetStatus);
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white first:rounded-t last:rounded-b"
+                                    >
+                                        {s}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    {item.status === 'SOLD' && (
+                    <div className="flex items-center justify-end gap-2">
+                        {item.status === 'PENDING' && (
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); handleOpenTransfer(item); }}
+                                className="text-xs bg-amber-900/30 hover:bg-amber-900/50 text-amber-500 hover:text-amber-400 px-3 py-1.5 rounded border border-amber-900/50 flex items-center gap-1 animate-pulse"
+                            >
+                                <AlertCircle className="w-3 h-3" />
+                                Action Needed
+                            </button>
+                        )}
                         <button 
-                            onClick={() => handleOpenTransfer(item)}
-                            className="text-xs bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded border border-slate-700 flex items-center gap-1 ml-auto"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteClick(item); }}
+                            className="p-2 text-slate-600 hover:text-red-400 hover:bg-red-900/10 rounded transition-colors"
+                            title="Delete Asset"
                         >
-                            <ArrowRightLeft className="w-3 h-3" />
-                            Protocol
+                            <Trash2 className="w-4 h-4" />
                         </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -253,8 +331,8 @@ Please update the host notes accordingly. Thank you.`;
 
       {/* Transfer Protocol Modal */}
       {showTransferModal && selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-lg shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowTransferModal(false)}>
+            <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-lg shadow-2xl animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
                 <div className="p-5 border-b border-slate-800 flex justify-between items-center">
                     <h3 className="font-bold text-white flex items-center gap-2">
                         <MessageSquare className="w-4 h-4 text-amber-500" />
@@ -299,6 +377,8 @@ Please update the host notes accordingly. Thank you.`;
                         className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium flex items-center gap-2"
                         onClick={() => {
                             setShowTransferModal(false);
+                            // Optionally update status to TRANSFERRED here automatically?
+                            // For now let user do it manually via dropdown
                         }}
                     >
                         <Copy className="w-4 h-4" />
@@ -311,8 +391,8 @@ Please update the host notes accordingly. Thank you.`;
 
       {/* Add Asset Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-lg shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowAddModal(false)}>
+            <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-lg shadow-2xl animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
                 <div className="p-5 border-b border-slate-800 flex justify-between items-center">
                     <h3 className="font-bold text-white flex items-center gap-2">
                         <Plus className="w-4 h-4 text-emerald-500" />
@@ -438,12 +518,12 @@ Please update the host notes accordingly. Thank you.`;
 
       {/* Sold Price Modal */}
       {showSoldModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-sm shadow-2xl animate-in fade-in zoom-in duration-200">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowSoldModal(false)}>
+            <div className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-sm shadow-2xl animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
                 <div className="p-5">
                     <h3 className="font-bold text-white mb-4 flex items-center gap-2">
                         <DollarSign className="w-5 h-5 text-emerald-500" />
-                        Confirm Sale Price
+                        Confirm Transaction Price
                     </h3>
                     <label className="text-xs text-slate-500 font-bold uppercase mb-2 block">Final Transaction Amount</label>
                     <div className="relative mb-6">
@@ -471,6 +551,40 @@ Please update the host notes accordingly. Thank you.`;
                             className="px-6 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold"
                         >
                             Confirm Sale
+                        </button>
+                    </div>
+                </div>
+            </div>
+          </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && itemToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowDeleteModal(false)}>
+            <div className="bg-slate-900 rounded-xl border border-red-900/50 w-full max-w-sm shadow-2xl animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+                <div className="p-5">
+                    <h3 className="font-bold text-white mb-2 flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-red-500" />
+                        Confirm Deletion
+                    </h3>
+                    <p className="text-sm text-slate-400 mb-6 leading-relaxed">
+                        Are you sure you want to remove <strong className="text-white">{itemToDelete.restaurantName}</strong> from your portfolio? This action cannot be undone.
+                    </p>
+                    <div className="flex justify-end gap-3">
+                        <button 
+                            onClick={() => {
+                                setShowDeleteModal(false);
+                                setItemToDelete(null);
+                            }}
+                            className="px-4 py-2 text-sm text-slate-400 hover:text-white"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={confirmDelete}
+                            className="px-6 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded font-bold shadow-lg shadow-red-900/20"
+                        >
+                            Delete Asset
                         </button>
                     </div>
                 </div>

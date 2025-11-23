@@ -11,6 +11,71 @@ import { City, Restaurant, MarketInsight, ChartDataPoint, PortfolioItem } from '
 import { fetchTopRestaurants, fetchMarketInsight, generateTrendData } from './services/geminiService';
 import { Globe, Radar, SearchX, LayoutDashboard, LineChart } from 'lucide-react';
 
+// High-quality seed data to demonstrate the platform's capabilities
+const MOCK_PORTFOLIO_DATA: PortfolioItem[] = [
+  {
+    id: 'seed-1',
+    restaurantName: 'Carbone',
+    date: '2024-06-20',
+    time: '19:30',
+    guests: 4,
+    costBasis: 40,
+    listPrice: 650,
+    status: 'LISTED',
+    platform: 'Resy'
+  },
+  {
+    id: 'seed-2',
+    restaurantName: 'Don Angie',
+    date: '2024-06-18',
+    time: '20:00',
+    guests: 2,
+    costBasis: 10,
+    listPrice: 250,
+    soldPrice: 225,
+    status: 'SOLD',
+    platform: 'Resy',
+    guestName: 'Michael Chen'
+  },
+  {
+    id: 'seed-3',
+    restaurantName: '4 Charles Prime Rib',
+    date: '2024-06-25',
+    time: '17:30',
+    guests: 2,
+    costBasis: 0,
+    listPrice: 300,
+    status: 'ACQUIRED',
+    platform: 'Resy'
+  },
+  {
+    id: 'seed-4',
+    restaurantName: 'Atomix',
+    date: '2024-06-12',
+    time: '20:45',
+    guests: 2,
+    costBasis: 750, // Prepaid tasting menu cost
+    listPrice: 1200,
+    soldPrice: 1150,
+    status: 'TRANSFERRED',
+    platform: 'Tock',
+    guestName: 'Sarah Williams'
+  },
+  {
+    id: 'seed-5',
+    restaurantName: 'Misi',
+    date: '2024-06-22',
+    time: '19:00',
+    guests: 2,
+    costBasis: 0,
+    listPrice: 180,
+    soldPrice: 180,
+    status: 'PENDING',
+    platform: 'Resy',
+    guestName: 'Waiting for Input'
+  }
+];
+
 const App: React.FC = () => {
   // View State
   const [activeView, setActiveView] = useState<'market' | 'portfolio'>('market');
@@ -38,21 +103,31 @@ const App: React.FC = () => {
       type: 'info' 
   });
 
-  // Load Portfolio from LocalStorage on mount
+  // Load Portfolio from LocalStorage on mount, or seed if empty
   useEffect(() => {
     const saved = localStorage.getItem('reservation_portfolio');
     if (saved) {
       try {
-        setPortfolioItems(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        if (parsed.length > 0) {
+            setPortfolioItems(parsed);
+        } else {
+            setPortfolioItems([]); 
+        }
       } catch (e) {
         console.error("Failed to load portfolio", e);
       }
+    } else {
+        // First time load - SEED DATA
+        setPortfolioItems(MOCK_PORTFOLIO_DATA);
     }
   }, []);
 
   // Save Portfolio to LocalStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('reservation_portfolio', JSON.stringify(portfolioItems));
+    if (portfolioItems.length > 0 || localStorage.getItem('reservation_portfolio')) {
+        localStorage.setItem('reservation_portfolio', JSON.stringify(portfolioItems));
+    }
   }, [portfolioItems]);
 
   // Load restaurants when city changes
@@ -138,14 +213,14 @@ const App: React.FC = () => {
       guests: 2,
       costBasis: 0, // User needs to update this
       listPrice: restaurant.estimatedResaleValue,
-      status: 'ACQUIRED',
+      status: 'WATCHING', // Default status for tracked market signals
       platform: 'Unknown'
     };
 
     setPortfolioItems(prev => [newItem, ...prev]);
     setNotification({
       visible: true,
-      message: `Tracked ${restaurant.name} in Command Center`,
+      message: `Tracking ${restaurant.name} in Watchlist`,
       type: 'success'
     });
   };
@@ -162,6 +237,17 @@ const App: React.FC = () => {
   const handleUpdateAsset = (updatedItem: PortfolioItem) => {
     setPortfolioItems(prev => prev.map(item => item.id === updatedItem.id ? updatedItem : item));
   };
+
+  const handleDeleteAsset = (itemId: string) => {
+    setPortfolioItems(prev => prev.filter(item => item.id !== itemId));
+    setNotification({
+      visible: true,
+      message: 'Asset removed from portfolio',
+      type: 'info'
+    });
+  };
+  
+  const pendingCount = portfolioItems.filter(i => i.status === 'PENDING').length;
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col text-slate-200 font-sans">
@@ -195,9 +281,9 @@ const App: React.FC = () => {
                 >
                     <LayoutDashboard className="w-4 h-4" />
                     Command Center
-                    {portfolioItems.length > 0 && (
-                      <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-1">
-                        {portfolioItems.length}
+                    {pendingCount > 0 && (
+                      <span className="bg-amber-500 text-slate-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-1 animate-pulse">
+                        {pendingCount}
                       </span>
                     )}
                 </button>
@@ -210,6 +296,7 @@ const App: React.FC = () => {
                   items={portfolioItems}
                   onUpdateItem={handleUpdateAsset}
                   onAddItem={handleManualAddAsset}
+                  onDeleteItem={handleDeleteAsset}
                 />
             </div>
         ) : (

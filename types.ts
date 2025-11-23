@@ -24,6 +24,8 @@ export interface MarketInsight {
   peakTimes: string[];
   platform: string;
   riskFactor: string;
+  releaseTime?: string; // e.g. "09:00", "10:00"
+  bookingUrl?: string;
   sources?: Source[];
 }
 
@@ -43,7 +45,7 @@ export interface ChartDataPoint {
   volume: number;
 }
 
-export type AssetStatus = 'ACQUIRED' | 'LISTED' | 'SOLD' | 'TRANSFERRED';
+export type AssetStatus = 'WATCHING' | 'ACQUIRED' | 'LISTED' | 'PENDING' | 'SOLD' | 'TRANSFERRED';
 
 export interface PortfolioItem {
   id: string;
