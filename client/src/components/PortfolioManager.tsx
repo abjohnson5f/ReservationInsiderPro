@@ -4,6 +4,8 @@ import { PortfolioItem, AssetStatus } from '../../types';
 import AcquisitionModal from './AcquisitionModal';
 import IdentityManager from './IdentityManager';
 import TransferTracker from './TransferTracker';
+import AnalyticsDashboard from './AnalyticsDashboard';
+import NotificationSettings from './NotificationSettings';
 import { 
   Briefcase, 
   DollarSign, 
@@ -24,7 +26,9 @@ import {
   Zap,
   Target,
   Users,
-  Package
+  Package,
+  BarChart3,
+  Bell
 } from 'lucide-react';
 
 interface PortfolioManagerProps {
@@ -36,7 +40,7 @@ interface PortfolioManagerProps {
 
 const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem, onAddItem, onDeleteItem }) => {
   // Tab State
-  const [activeTab, setActiveTab] = useState<'portfolio' | 'identities' | 'transfers'>('portfolio');
+  const [activeTab, setActiveTab] = useState<'portfolio' | 'identities' | 'transfers' | 'analytics' | 'notifications'>('portfolio');
   
   // Notification for child components
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -254,6 +258,28 @@ Please update the host notes accordingly. Thank you.`;
           <Package className="w-4 h-4" />
           Transfers & AT
         </button>
+        <button
+          onClick={() => setActiveTab('analytics')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'analytics'
+              ? 'bg-emerald-600 text-white shadow-lg'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          Analytics
+        </button>
+        <button
+          onClick={() => setActiveTab('notifications')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'notifications'
+              ? 'bg-violet-600 text-white shadow-lg'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Bell className="w-4 h-4" />
+          Alerts
+        </button>
       </div>
 
       {/* Conditionally render based on active tab */}
@@ -263,6 +289,14 @@ Please update the host notes accordingly. Thank you.`;
       
       {activeTab === 'transfers' && (
         <TransferTracker onNotify={handleNotify} />
+      )}
+      
+      {activeTab === 'analytics' && (
+        <AnalyticsDashboard />
+      )}
+      
+      {activeTab === 'notifications' && (
+        <NotificationSettings />
       )}
       
       {activeTab === 'portfolio' && (

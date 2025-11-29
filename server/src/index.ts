@@ -13,6 +13,8 @@ import restaurantRoutes from './routes/restaurants';
 import sniperRoutes from './routes/sniper';
 import identityRoutes from './routes/identities';
 import transferRoutes from './routes/transfers';
+import analyticsRoutes from './routes/analytics';
+import notificationRoutes from './routes/notifications';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -28,6 +30,8 @@ app.use('/api/restaurants', restaurantRoutes); // Database-backed restaurant dat
 app.use('/api/sniper', sniperRoutes);        // Phase 3: Sniper automation system
 app.use('/api/identities', identityRoutes);  // Multi-identity management
 app.use('/api/transfers', transferRoutes);   // Transfer & AT listing workflow
+app.use('/api/analytics', analyticsRoutes);  // Phase 2+3: Pricing, patterns, competition, templates
+app.use('/api/notifications', notificationRoutes);  // Telegram & notification services
 
 // Health Check
 app.get('/api/health', (req, res) => {

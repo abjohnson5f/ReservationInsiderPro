@@ -323,6 +323,142 @@ Now targeting <b>${restaurantName}</b>
 };
 
 /**
+ * Reservation listed on AT
+ */
+export const notifyListed = async (
+  restaurantName: string,
+  price: number,
+  date: string,
+  listingUrl?: string
+): Promise<void> => {
+  const text = `
+📢 <b>LISTED ON AT</b>
+
+🍽️ <b>${restaurantName}</b>
+📅 ${date}
+💰 $${price}
+${listingUrl ? `\n🔗 ${listingUrl}` : ''}
+
+<i>Now hunting for buyers...</i>
+`;
+
+  await send(text);
+};
+
+/**
+ * Reservation sold
+ */
+export const notifySold = async (
+  restaurantName: string,
+  salePrice: number,
+  buyerName: string,
+  profit?: number
+): Promise<void> => {
+  const text = `
+💰 <b>SOLD!</b>
+
+🍽️ <b>${restaurantName}</b>
+👤 Buyer: ${buyerName}
+💵 Sale Price: $${salePrice}
+${profit ? `📈 Profit: $${profit}` : ''}
+
+🎉 <i>Money printer goes BRRR!</i>
+`;
+
+  await send(text);
+};
+
+/**
+ * Transfer reminder
+ */
+export const notifyTransferReminder = async (
+  restaurantName: string,
+  buyerName: string,
+  deadline: string,
+  method: string
+): Promise<void> => {
+  const text = `
+⏰ <b>TRANSFER REMINDER</b>
+
+🍽️ <b>${restaurantName}</b>
+👤 Buyer: ${buyerName}
+📋 Method: ${method}
+⏱️ Deadline: ${deadline}
+
+<i>Don't forget to complete the transfer!</i>
+`;
+
+  await send(text);
+};
+
+/**
+ * Transfer completed
+ */
+export const notifyTransferComplete = async (
+  restaurantName: string,
+  buyerName: string
+): Promise<void> => {
+  const text = `
+✅ <b>TRANSFER COMPLETE</b>
+
+🍽️ <b>${restaurantName}</b>
+👤 ${buyerName}
+
+<i>Another successful transaction! 🎊</i>
+`;
+
+  await send(text);
+};
+
+/**
+ * Price suggestion notification
+ */
+export const notifyPriceSuggestion = async (
+  restaurantName: string,
+  suggestedPrice: number,
+  confidence: string,
+  reasoning: string[]
+): Promise<void> => {
+  const text = `
+💡 <b>PRICING SUGGESTION</b>
+
+🍽️ <b>${restaurantName}</b>
+💰 Suggested: $${suggestedPrice}
+📊 Confidence: ${confidence}
+
+<b>Factors:</b>
+${reasoning.map(r => `• ${r}`).join('\n')}
+`;
+
+  await send(text);
+};
+
+/**
+ * Daily summary
+ */
+export const notifyDailySummary = async (
+  stats: {
+    acquisitions: number;
+    sales: number;
+    revenue: number;
+    pendingTransfers: number;
+  }
+): Promise<void> => {
+  const text = `
+📊 <b>DAILY SUMMARY</b>
+
+🎯 Acquisitions: ${stats.acquisitions}
+💰 Sales: ${stats.sales}
+💵 Revenue: $${stats.revenue}
+📦 Pending Transfers: ${stats.pendingTransfers}
+
+<i>Keep grinding! 💪</i>
+`;
+
+  await send(text);
+};
+
+/**
  * Status update
  */
 export const sendStatus = async (
@@ -645,6 +781,12 @@ export default {
   notifySoldOut,
   notifyError,
   notifySniperArmed,
+  notifyListed,
+  notifySold,
+  notifyTransferReminder,
+  notifyTransferComplete,
+  notifyPriceSuggestion,
+  notifyDailySummary,
   sendStatus,
   sendTest,
   isConfigured,
