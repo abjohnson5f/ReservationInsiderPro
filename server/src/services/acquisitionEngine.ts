@@ -23,13 +23,14 @@
  * - Confirmation of drop patterns after success
  */
 
-import resyClient from './resyApi';
-import openTableClient from './openTableApi';
+import resyClient, { ConciergeBookingRequest } from './resyApi';
+import openTableClient, { OpenTableProfessionalBookingRequest } from './openTableApi';
 import sevenRoomsClient from './sevenRoomsApi';
 import tockClient from './tockApi';
 import pool from '../db';
 import identityManager, { BookingIdentity } from './identityManager';
 import transferTracker from './transferTracker';
+import clientManager, { Client } from './clientManager';
 
 // ============================================
 // TYPES
@@ -62,6 +63,44 @@ export interface AcquisitionRequest {
   
   // Portfolio tracking
   portfolioItemId?: string;
+  
+  // ============================================
+  // CONCIERGE MODE - Book on behalf of clients
+  // ============================================
+  // When enabled, the reservation is placed under the CLIENT's
+  // name, not ours. This is the key to the concierge business model:
+  // - No flagging risk (our name never appears)
+  // - No transfer needed (already in client's name)
+  // - Legitimate business (executive assistant/concierge)
+  //
+  // Requires:
+  // - Resy: Concierge account (apply at concierge@resy.com)
+  // - OpenTable: Professional Profile enabled in account settings
+  // - SevenRooms: Just needs client info (no special account)
+  // - Tock: Standard account with client info
+  // ============================================
+  bookingMode?: 'standard' | 'concierge';
+  clientId?: number;  // If concierge mode, the client to book for
+  clientInfo?: {      // Or provide client info directly
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    specialRequest?: string;
+  };
+}
+
+// Concierge-specific booking request
+export interface ConciergeAcquisitionRequest extends AcquisitionRequest {
+  bookingMode: 'concierge';
+  clientId?: number;
+  clientInfo: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    specialRequest?: string;
+  };
 }
 
 export interface AcquisitionResult {
@@ -74,9 +113,14 @@ export interface AcquisitionResult {
   duration?: number;
   details?: any;
   
-  // Identity tracking
+  // Identity tracking (for standard mode)
   identityId?: number;
   identityName?: string;
+  
+  // Concierge mode tracking
+  bookingMode?: 'standard' | 'concierge';
+  bookedUnderName?: string;  // Name the reservation is under
+  clientId?: number;
   
   // Transfer tracking
   transferId?: number;
@@ -126,7 +170,11 @@ class AcquisitionEngine {
   }
 
   /**
-   * Execute a single acquisition attempt with identity rotation
+   * Execute a single acquisition attempt
+   * 
+   * Supports two modes:
+   * 1. STANDARD: Book under our identity (then transfer to buyer)
+   * 2. CONCIERGE: Book under CLIENT's name (no transfer needed!)
    */
   async acquire(request: AcquisitionRequest): Promise<AcquisitionResult> {
     const startTime = Date.now();
@@ -134,6 +182,94 @@ class AcquisitionEngine {
     let attempts = 0;
     let lastError: string | undefined;
 
+    // Determine booking mode
+    const bookingMode = request.bookingMode || 'standard';
+    const isConcierge = bookingMode === 'concierge';
+
+    console.log(`\n[AcquisitionEngine] 🎯 Starting ${isConcierge ? '🎩 CONCIERGE' : 'STANDARD'} acquisition`);
+    console.log(`  Platform: ${request.platform}`);
+    console.log(`  Restaurant: ${request.restaurantName}`);
+    console.log(`  Date: ${request.date} at ${request.time}`);
+    console.log(`  Party: ${request.partySize}`);
+
+    // ============================================
+    // CONCIERGE MODE: Book under client's name
+    // ============================================
+    if (isConcierge) {
+      // Get client info (either from clientId or direct clientInfo)
+      let clientInfo = request.clientInfo;
+      let clientRecord: Client | null = null;
+      
+      if (request.clientId && !clientInfo) {
+        clientRecord = await clientManager.getClientById(request.clientId);
+        if (!clientRecord) {
+          return {
+            success: false,
+            platform: request.platform,
+            bookingMode: 'concierge',
+            error: `Client not found: ${request.clientId}`,
+            attempts: 0,
+            duration: Date.now() - startTime,
+          };
+        }
+        clientInfo = {
+          firstName: clientRecord.first_name,
+          lastName: clientRecord.last_name,
+          email: clientRecord.email,
+          phone: clientRecord.phone,
+        };
+      }
+
+      if (!clientInfo) {
+        return {
+          success: false,
+          platform: request.platform,
+          bookingMode: 'concierge',
+          error: 'Concierge mode requires clientId or clientInfo',
+          attempts: 0,
+          duration: Date.now() - startTime,
+        };
+      }
+
+      console.log(`  Client: ${clientInfo.firstName} ${clientInfo.lastName}`);
+
+      // Execute concierge booking
+      const result = await this.acquireConcierge(request, clientInfo);
+      
+      if (result.success && (request.clientId || clientRecord)) {
+        // Record the booking for the client
+        const cid = request.clientId || clientRecord?.id;
+        if (cid) {
+          await clientManager.recordBooking(cid);
+        }
+        
+        // Create transfer record (marked as concierge - no transfer needed)
+        const transfer = await transferTracker.createTransfer({
+          portfolio_item_id: request.portfolioItemId,
+          restaurant_name: request.restaurantName,
+          platform: request.platform,
+          reservation_date: request.date,
+          reservation_time: result.bookedTime || request.time,
+          party_size: request.partySize,
+          confirmation_number: result.confirmationCode,
+          booking_type: 'concierge',
+          client_id: cid,
+          booked_under_name: `${clientInfo.firstName} ${clientInfo.lastName}`,
+          status: 'COMPLETED', // No transfer needed for concierge
+        });
+        result.transferId = transfer.id;
+        result.clientId = cid;
+      }
+
+      result.attempts = attempts + 1;
+      result.duration = Date.now() - startTime;
+      return result;
+    }
+
+    // ============================================
+    // STANDARD MODE: Book under our identity
+    // ============================================
+    
     // Select or fetch the identity to use
     let identity: BookingIdentity | null = null;
     const platformKey = request.platform as 'resy' | 'opentable' | 'sevenrooms' | 'tock';
@@ -149,17 +285,13 @@ class AcquisitionEngine {
       return {
         success: false,
         platform: request.platform,
+        bookingMode: 'standard',
         error: `No available identity with ${request.platform} credentials and capacity`,
         attempts: 0,
         duration: Date.now() - startTime,
       };
     }
 
-    console.log(`\n[AcquisitionEngine] 🎯 Starting acquisition`);
-    console.log(`  Platform: ${request.platform}`);
-    console.log(`  Restaurant: ${request.restaurantName}`);
-    console.log(`  Date: ${request.date} at ${request.time}`);
-    console.log(`  Party: ${request.partySize}`);
     console.log(`  Identity: ${identity.name} (ID: ${identity.id})`);
 
     for (let retry = 0; retry < maxRetries; retry++) {
@@ -185,6 +317,7 @@ class AcquisitionEngine {
             return {
               success: false,
               platform: request.platform,
+              bookingMode: 'standard',
               error: `Unknown platform: ${request.platform}`,
               attempts,
               duration: Date.now() - startTime,
@@ -196,6 +329,8 @@ class AcquisitionEngine {
           result.duration = Date.now() - startTime;
           result.identityId = identity.id;
           result.identityName = identity.name;
+          result.bookingMode = 'standard';
+          result.bookedUnderName = identity.name;
           
           // Record the booking against the identity
           await identityManager.recordBooking(identity.id, platformKey);
@@ -210,6 +345,8 @@ class AcquisitionEngine {
             party_size: request.partySize,
             confirmation_number: result.confirmationCode,
             booking_identity_id: identity.id,
+            booking_type: 'standard',
+            booked_under_name: identity.name,
           });
           result.transferId = transfer.id;
           
@@ -241,9 +378,199 @@ class AcquisitionEngine {
     return {
       success: false,
       platform: request.platform,
+      bookingMode: 'standard',
       error: lastError || 'Max retries exceeded',
       attempts,
       duration: Date.now() - startTime,
+    };
+  }
+
+  // ============================================
+  // CONCIERGE BOOKING METHODS
+  // ============================================
+
+  /**
+   * Execute concierge booking (under client's name)
+   */
+  private async acquireConcierge(
+    request: AcquisitionRequest,
+    clientInfo: { firstName: string; lastName: string; email: string; phone: string; specialRequest?: string }
+  ): Promise<AcquisitionResult> {
+    console.log(`[AcquisitionEngine] 🎩 Concierge booking for ${clientInfo.firstName} ${clientInfo.lastName}`);
+
+    try {
+      switch (request.platform) {
+        case 'resy':
+          return await this.acquireResyConcierge(request, clientInfo);
+        case 'opentable':
+          return await this.acquireOpenTableProfessional(request, clientInfo);
+        case 'sevenrooms':
+          return await this.acquireSevenRoomsConcierge(request, clientInfo);
+        case 'tock':
+          return await this.acquireTockConcierge(request, clientInfo);
+        default:
+          return {
+            success: false,
+            platform: request.platform,
+            bookingMode: 'concierge',
+            error: `Unknown platform: ${request.platform}`,
+          };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        platform: request.platform,
+        bookingMode: 'concierge',
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Resy Concierge booking - uses "Book On Behalf Of" feature
+   * Requires: Approved Resy Concierge account
+   */
+  private async acquireResyConcierge(
+    request: AcquisitionRequest,
+    clientInfo: { firstName: string; lastName: string; email: string; phone: string; specialRequest?: string }
+  ): Promise<AcquisitionResult> {
+    if (!request.resyVenueId) {
+      return { success: false, platform: 'resy', bookingMode: 'concierge', error: 'resyVenueId not provided' };
+    }
+
+    const result = await resyClient.bookOnBehalfOf({
+      venueId: request.resyVenueId,
+      date: request.date,
+      partySize: request.partySize,
+      preferredTime: request.time,
+      timeFlexibility: request.timeFlexibility || 60,
+      guestFirstName: clientInfo.firstName,
+      guestLastName: clientInfo.lastName,
+      guestEmail: clientInfo.email,
+      guestPhone: clientInfo.phone,
+      specialRequest: clientInfo.specialRequest,
+    });
+
+    return {
+      success: result.success,
+      platform: 'resy',
+      bookingMode: 'concierge',
+      confirmationCode: result.resy_token || result.confirmation,
+      bookedTime: result.bookedTime,
+      bookedUnderName: result.bookedUnderName,
+      error: result.error,
+      details: result.details,
+    };
+  }
+
+  /**
+   * OpenTable Professional Profile booking - books under client's name
+   * Requires: Professional Profile enabled in account settings
+   */
+  private async acquireOpenTableProfessional(
+    request: AcquisitionRequest,
+    clientInfo: { firstName: string; lastName: string; email: string; phone: string }
+  ): Promise<AcquisitionResult> {
+    if (!request.openTableId) {
+      return { success: false, platform: 'opentable', bookingMode: 'concierge', error: 'openTableId not provided' };
+    }
+
+    const result = await openTableClient.bookForDiner({
+      restaurantId: request.openTableId,
+      date: request.date,
+      time: request.time,
+      partySize: request.partySize,
+      timeFlexibility: request.timeFlexibility || 60,
+      dinerFirstName: clientInfo.firstName,
+      dinerLastName: clientInfo.lastName,
+      dinerEmail: clientInfo.email,
+      dinerPhone: clientInfo.phone,
+    });
+
+    return {
+      success: result.success,
+      platform: 'opentable',
+      bookingMode: 'concierge',
+      confirmationCode: result.confirmationNumber,
+      bookedTime: result.bookedTime,
+      bookedUnderName: result.bookedUnderName,
+      error: result.error,
+      details: result.details,
+    };
+  }
+
+  /**
+   * SevenRooms concierge booking - uses client info directly
+   * SevenRooms widget bookings just need guest info, no special account needed
+   */
+  private async acquireSevenRoomsConcierge(
+    request: AcquisitionRequest,
+    clientInfo: { firstName: string; lastName: string; email: string; phone: string }
+  ): Promise<AcquisitionResult> {
+    if (!request.sevenRoomsSlug) {
+      return { success: false, platform: 'sevenrooms', bookingMode: 'concierge', error: 'sevenRoomsSlug not provided' };
+    }
+
+    // SevenRooms naturally supports booking with any guest info
+    // We just pass the client's info instead of ours
+    const result = await sevenRoomsClient.acquire({
+      venueSlug: request.sevenRoomsSlug,
+      date: request.date,
+      time: request.time,
+      partySize: request.partySize,
+      timeFlexibility: request.timeFlexibility || 60,
+      // Override guest info with client info
+      firstName: clientInfo.firstName,
+      lastName: clientInfo.lastName,
+      email: clientInfo.email,
+      phone: clientInfo.phone,
+    });
+
+    return {
+      success: result.success,
+      platform: 'sevenrooms',
+      bookingMode: 'concierge',
+      confirmationCode: result.confirmationId,
+      bookedTime: request.time,
+      bookedUnderName: `${clientInfo.firstName} ${clientInfo.lastName}`,
+      error: result.error,
+      details: result.details,
+    };
+  }
+
+  /**
+   * Tock concierge booking - uses client info directly
+   */
+  private async acquireTockConcierge(
+    request: AcquisitionRequest,
+    clientInfo: { firstName: string; lastName: string; email: string; phone: string }
+  ): Promise<AcquisitionResult> {
+    if (!request.tockSlug) {
+      return { success: false, platform: 'tock', bookingMode: 'concierge', error: 'tockSlug not provided' };
+    }
+
+    // Tock bookings can use client info if we extend the API client
+    const result = await tockClient.acquire({
+      venueSlug: request.tockSlug,
+      date: request.date,
+      time: request.time,
+      partySize: request.partySize,
+      // Client info would need to be passed to Tock API
+      firstName: clientInfo.firstName,
+      lastName: clientInfo.lastName,
+      email: clientInfo.email,
+      phone: clientInfo.phone,
+    });
+
+    return {
+      success: result.success,
+      platform: 'tock',
+      bookingMode: 'concierge',
+      confirmationCode: result.confirmationId,
+      bookedTime: request.time,
+      bookedUnderName: `${clientInfo.firstName} ${clientInfo.lastName}`,
+      error: result.error,
+      details: result.details,
     };
   }
 

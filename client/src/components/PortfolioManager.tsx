@@ -6,6 +6,7 @@ import IdentityManager from './IdentityManager';
 import TransferTracker from './TransferTracker';
 import AnalyticsDashboard from './AnalyticsDashboard';
 import NotificationSettings from './NotificationSettings';
+import ClientManager from './ClientManager';
 import { 
   Briefcase, 
   DollarSign, 
@@ -40,7 +41,7 @@ interface PortfolioManagerProps {
 
 const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem, onAddItem, onDeleteItem }) => {
   // Tab State
-  const [activeTab, setActiveTab] = useState<'portfolio' | 'identities' | 'transfers' | 'analytics' | 'notifications'>('portfolio');
+  const [activeTab, setActiveTab] = useState<'portfolio' | 'identities' | 'clients' | 'transfers' | 'analytics' | 'notifications'>('portfolio');
   
   // Notification for child components
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -248,6 +249,17 @@ Please update the host notes accordingly. Thank you.`;
           Identities
         </button>
         <button
+          onClick={() => setActiveTab('clients')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'clients'
+              ? 'bg-emerald-600 text-white shadow-lg'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Briefcase className="w-4 h-4" />
+          🎩 Clients
+        </button>
+        <button
           onClick={() => setActiveTab('transfers')}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === 'transfers'
@@ -285,6 +297,10 @@ Please update the host notes accordingly. Thank you.`;
       {/* Conditionally render based on active tab */}
       {activeTab === 'identities' && (
         <IdentityManager onNotify={handleNotify} />
+      )}
+      
+      {activeTab === 'clients' && (
+        <ClientManager />
       )}
       
       {activeTab === 'transfers' && (

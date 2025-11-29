@@ -128,6 +128,23 @@ export interface AcquisitionRequest {
   partySize: number;
   preferredTime?: string; // HH:MM (24h format)
   timeFlexibility?: number; // Minutes before/after preferred time
+  // Override credentials for identity rotation
+  authToken?: string;
+  paymentMethodId?: string;
+}
+
+// Concierge booking - book on behalf of a client
+export interface ConciergeBookingRequest extends AcquisitionRequest {
+  guestFirstName: string;
+  guestLastName: string;
+  guestEmail: string;
+  guestPhone: string;
+  specialRequest?: string;
+}
+
+export interface ConciergeBookingResult extends ResyBookingResult {
+  bookedUnderName?: string;
+  bookedTime?: string;
 }
 
 // ============================================
@@ -452,6 +469,244 @@ class ResyApiClient {
       console.error('[ResyAPI] Error fetching reservations:', error.message);
       return [];
     }
+  }
+
+  // ============================================
+  // CONCIERGE BOOKING - "Book On Behalf Of"
+  // ============================================
+  // 
+  // This is the KEY feature for dominating AppointmentTrader:
+  // - Book reservations under CLIENT's name (not ours)
+  // - No flagging risk (our name never appears)
+  // - No transfer needed (already in client's name)
+  // - Bypass multiple booking restrictions (concierge accounts)
+  //
+  // Requires: Resy Concierge account approval
+  // Apply at: concierge@resy.com
+  // ============================================
+
+  /**
+   * Book a reservation on behalf of a client (Concierge Mode)
+   * 
+   * This method is for approved Resy Concierge accounts only.
+   * The reservation appears under the CLIENT's name, not yours.
+   * 
+   * @param request - Booking details including guest info
+   * @returns Booking result with client name as booked-under
+   */
+  async bookOnBehalfOf(request: ConciergeBookingRequest): Promise<ConciergeBookingResult> {
+    const { 
+      venueId, date, partySize, preferredTime, timeFlexibility = 60,
+      guestFirstName, guestLastName, guestEmail, guestPhone,
+      specialRequest
+    } = request;
+
+    console.log(`[ResyAPI] 🎩 CONCIERGE MODE - Booking on behalf of ${guestFirstName} ${guestLastName}`);
+    console.log(`[ResyAPI] Venue: ${venueId}, Date: ${date}, Party: ${partySize}`);
+
+    try {
+      // Step 1: Find available slots
+      const slots = await this.findSlots(venueId, date, partySize);
+      
+      if (!slots.length) {
+        return {
+          success: false,
+          error: 'No slots available',
+        };
+      }
+
+      // Step 2: Find the best matching slot
+      let bestSlot: ResySlot | null = null;
+      
+      if (preferredTime) {
+        const targetMinutes = this.timeToMinutes(preferredTime);
+        let closestDiff = Infinity;
+
+        for (const slot of slots) {
+          const slotTime = this.parseSlotTime(slot.time_slot || slot.date?.start);
+          if (slotTime !== null) {
+            const diff = Math.abs(slotTime - targetMinutes);
+            if (diff <= timeFlexibility && diff < closestDiff) {
+              closestDiff = diff;
+              bestSlot = slot;
+            }
+          }
+        }
+      }
+
+      if (!bestSlot) {
+        bestSlot = slots[0];
+        console.log(`[ResyAPI] Using first available slot: ${bestSlot.time_slot || bestSlot.date?.start}`);
+      } else {
+        console.log(`[ResyAPI] Found matching slot: ${bestSlot.time_slot || bestSlot.date?.start}`);
+      }
+
+      // Step 3: Get the booking token
+      const bookToken = await this.getBookingToken(bestSlot.config_id, date, partySize);
+
+      // Step 4: Make the concierge reservation
+      const result = await this.makeConciergeReservation(bookToken, {
+        firstName: guestFirstName,
+        lastName: guestLastName,
+        email: guestEmail,
+        phone: guestPhone,
+        specialRequest,
+      });
+      
+      if (result.success) {
+        return {
+          ...result,
+          bookedUnderName: `${guestFirstName} ${guestLastName}`,
+          bookedTime: bestSlot.time_slot || bestSlot.date?.start,
+        };
+      }
+
+      return result;
+    } catch (error: any) {
+      console.error('[ResyAPI] Concierge booking failed:', error.message);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Complete a concierge reservation with guest details
+   * 
+   * This is the "Book On Behalf Of" API call that Resy Concierge
+   * accounts have access to.
+   */
+  private async makeConciergeReservation(
+    bookToken: string, 
+    guest: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone: string;
+      specialRequest?: string;
+    }
+  ): Promise<ConciergeBookingResult> {
+    if (!this.authToken) {
+      return { success: false, error: 'RESY_AUTH_TOKEN not configured' };
+    }
+    if (!this.paymentId) {
+      return { success: false, error: 'RESY_PAYMENT_ID not configured' };
+    }
+
+    console.log(`[ResyAPI] Making concierge reservation for: ${guest.firstName} ${guest.lastName}`);
+
+    try {
+      // Build form data for concierge booking
+      // Note: The exact parameters may vary - this is based on the Resy helpdesk documentation
+      const formData = new URLSearchParams();
+      formData.append('book_token', bookToken);
+      formData.append('struct_payment_method', JSON.stringify({ id: parseInt(this.paymentId) }));
+      formData.append('source_id', 'resy.com-venue-details');
+      
+      // Concierge-specific fields: Book on behalf of another guest
+      formData.append('book_on_behalf', 'true');
+      formData.append('guest_first_name', guest.firstName);
+      formData.append('guest_last_name', guest.lastName);
+      formData.append('guest_email', guest.email);
+      formData.append('guest_phone_number', guest.phone);
+      
+      if (guest.specialRequest) {
+        formData.append('special_request', guest.specialRequest);
+      }
+
+      const response = await this.makeRequest('post', '/3/book', formData.toString());
+
+      console.log('[ResyAPI] ✅ Concierge reservation successful!', response.data);
+
+      return {
+        success: true,
+        resy_token: response.data.resy_token,
+        reservation_id: response.data.reservation_id,
+        confirmation: response.data.resy_token || 'Confirmed',
+        bookedUnderName: `${guest.firstName} ${guest.lastName}`,
+        details: response.data,
+      };
+    } catch (error: any) {
+      const errorData = error.response?.data;
+      console.error('[ResyAPI] ❌ Concierge booking failed:', errorData || error.message);
+
+      let errorMessage = 'Concierge booking failed';
+      if (errorData?.message) {
+        errorMessage = errorData.message;
+      } else if (error.response?.status === 403) {
+        errorMessage = 'Concierge access denied - ensure your account has concierge privileges';
+      } else if (errorData?.status === 412) {
+        errorMessage = 'Slot no longer available';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Authentication failed - check your RESY_AUTH_TOKEN';
+      }
+
+      return {
+        success: false,
+        error: errorMessage,
+        details: errorData,
+      };
+    }
+  }
+
+  /**
+   * Get concierge reservations (reservations booked on behalf of others)
+   * 
+   * For concierge accounts, this returns all reservations booked
+   * for clients, separate from personal reservations.
+   */
+  async getConciergeReservations(): Promise<any[]> {
+    if (!this.authToken) {
+      console.warn('[ResyAPI] Cannot check concierge reservations without auth token');
+      return [];
+    }
+
+    try {
+      // Note: The exact endpoint may vary
+      const url = '/3/user/reservations?limit=50&offset=1&type=upcoming&concierge=true';
+      const response = await this.makeRequest('get', url);
+
+      return response.data.reservations || [];
+    } catch (error: any) {
+      console.error('[ResyAPI] Error fetching concierge reservations:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Cancel a concierge reservation
+   */
+  async cancelConciergeReservation(resyToken: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.authToken) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    console.log(`[ResyAPI] Canceling concierge reservation: ${resyToken}`);
+
+    try {
+      const formData = new URLSearchParams();
+      formData.append('resy_token', resyToken);
+
+      await this.makeRequest('post', '/3/cancel', formData.toString());
+      
+      console.log('[ResyAPI] ✅ Reservation cancelled');
+      return { success: true };
+    } catch (error: any) {
+      console.error('[ResyAPI] ❌ Cancel failed:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+      };
+    }
+  }
+
+  /**
+   * Create a temporary client with custom credentials
+   * Used for identity rotation or testing
+   */
+  withCredentials(authToken: string, paymentId: string): ResyApiClient {
+    return new ResyApiClient(authToken, paymentId);
   }
 }
 

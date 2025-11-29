@@ -7,6 +7,7 @@
  * - Platform selector with config status
  * - Credential validation per platform
  * - Unified search and booking flow
+ * - CONCIERGE MODE: Book under client's name (no transfer needed!)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -25,13 +26,17 @@ import {
   Settings2,
   ExternalLink,
   Shield,
-  XCircle
+  XCircle,
+  User,
+  Briefcase
 } from 'lucide-react';
-import { ResySlot, ResyVenue, AcquisitionResult } from '../../types';
+import { ResySlot, ResyVenue, AcquisitionResult, Client } from '../../types';
+import { SNIPER_API, CLIENTS_API } from '../config';
 
-const API_BASE = 'http://localhost:3000/api/sniper';
+const API_BASE = SNIPER_API;
 
 type Platform = 'resy' | 'opentable' | 'sevenrooms' | 'tock';
+type BookingMode = 'standard' | 'concierge';
 
 interface PlatformConfig {
   name: string;
@@ -132,6 +137,13 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
     tock: null,
   });
 
+  // CONCIERGE MODE STATE
+  // Book under client's name instead of our identity
+  const [bookingMode, setBookingMode] = useState<BookingMode>('standard');
+  const [clients, setClients] = useState<Client[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
+  const [loadingClients, setLoadingClients] = useState(false);
+
   // Search/booking state
   const [step, setStep] = useState<Step>('search');
   const [searchQuery, setSearchQuery] = useState(initialRestaurantName);
@@ -152,8 +164,25 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       fetchAllPlatformStatuses();
+      fetchClients();
     }
   }, [isOpen]);
+
+  // Fetch clients for concierge mode
+  const fetchClients = async () => {
+    setLoadingClients(true);
+    try {
+      const response = await fetch(CLIENTS_API);
+      if (response.ok) {
+        const data = await response.json();
+        setClients(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch clients:', err);
+    } finally {
+      setLoadingClients(false);
+    }
+  };
 
   // Reset state when opened
   useEffect(() => {
@@ -170,6 +199,8 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
       setSelectedVenue(null);
       setSlots([]);
       setPlatformId('');
+      setBookingMode('standard');
+      setSelectedClientId(null);
     }
   }, [isOpen, initialRestaurantName, initialDate, initialTime, initialGuests, initialPlatform]);
 
@@ -295,59 +326,57 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
     setIsLoading(true);
     setError(null);
     
+    // Validate concierge mode has a client selected
+    if (bookingMode === 'concierge' && !selectedClientId) {
+      setError('Please select a client for concierge booking');
+      setStep('slots');
+      setIsLoading(false);
+      return;
+    }
+    
     try {
+      // Use unified acquisition endpoint for all platforms
+      // This handles both standard and concierge modes
+      const url = `${API_BASE}/acquire`;
+      
       let body: any = {
+        platform,
+        restaurantName: selectedVenue?.name || platformId,
         date,
         partySize,
-        time: preferredTime,
+        time: slot?.time || preferredTime,
         timeFlexibility: 60,
+        bookingMode,
       };
       
-      let url: string;
-      
+      // Add platform-specific IDs
       switch (platform) {
         case 'resy':
-          if (slot) {
-            url = `${API_BASE}/resy/book-slot`;
-            body = { configId: slot.config_id, date, partySize };
-          } else {
-            url = `${API_BASE}/resy/acquire`;
-            body = {
-              venueId: selectedVenue?.id || platformId,
-              date,
-              partySize,
-              preferredTime,
-              timeFlexibility: 60,
-            };
-          }
+          body.resyVenueId = selectedVenue?.id || parseInt(platformId);
           break;
         case 'opentable':
-          url = `${API_BASE}/opentable/acquire`;
-          body = {
-            restaurantId: parseInt(platformId),
-            date,
-            time: slot?.time || preferredTime,
-            partySize,
-          };
+          body.openTableId = parseInt(platformId);
           break;
         case 'sevenrooms':
-          url = `${API_BASE}/sevenrooms/acquire`;
-          body = {
-            venueSlug: platformId,
-            date,
-            time: slot?.time || preferredTime,
-            partySize,
-          };
+          body.sevenRoomsSlug = platformId;
           break;
         case 'tock':
-          url = `${API_BASE}/tock/acquire`;
-          body = {
-            venueSlug: platformId,
-            date,
-            time: slot?.time || preferredTime,
-            partySize,
-          };
+          body.tockSlug = platformId;
           break;
+      }
+      
+      // Add concierge mode parameters
+      if (bookingMode === 'concierge' && selectedClientId) {
+        body.clientId = selectedClientId;
+        const selectedClient = clients.find(c => c.id === selectedClientId);
+        if (selectedClient) {
+          body.clientInfo = {
+            firstName: selectedClient.first_name,
+            lastName: selectedClient.last_name,
+            email: selectedClient.email,
+            phone: selectedClient.phone,
+          };
+        }
       }
       
       const response = await fetch(url, {
@@ -484,6 +513,105 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                 : 'bg-red-900/30 text-red-400 border border-red-800'
             }`}>
               {validationResults[platform]!.message}
+            </div>
+          )}
+        </div>
+
+        {/* Booking Mode Toggle */}
+        <div className="p-4 border-b border-slate-800 bg-slate-950/30">
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-xs text-slate-500 font-bold uppercase">Booking Mode</label>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              {bookingMode === 'concierge' && (
+                <span className="text-emerald-400 flex items-center gap-1">
+                  <Briefcase className="w-3 h-3" /> No transfer needed!
+                </span>
+              )}
+            </div>
+          </div>
+          
+          <div className="flex gap-2">
+            <button
+              onClick={() => setBookingMode('standard')}
+              className={`flex-1 p-3 rounded-lg border transition-all ${
+                bookingMode === 'standard'
+                  ? 'bg-blue-500/20 border-blue-500 text-blue-400'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+              }`}
+            >
+              <User className="w-4 h-4 mx-auto mb-1" />
+              <div className="text-sm font-medium">Standard</div>
+              <div className="text-[10px] opacity-70">Book under your identity</div>
+            </button>
+            <button
+              onClick={() => setBookingMode('concierge')}
+              className={`flex-1 p-3 rounded-lg border transition-all ${
+                bookingMode === 'concierge'
+                  ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+              }`}
+            >
+              <Briefcase className="w-4 h-4 mx-auto mb-1" />
+              <div className="text-sm font-medium">🎩 Concierge</div>
+              <div className="text-[10px] opacity-70">Book under client's name</div>
+            </button>
+          </div>
+          
+          {/* Client Selection (Concierge Mode) */}
+          {bookingMode === 'concierge' && (
+            <div className="mt-4">
+              <label className="text-xs text-slate-500 font-bold uppercase mb-2 block">
+                Select Client
+              </label>
+              {loadingClients ? (
+                <div className="flex items-center justify-center p-4 text-slate-500">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading clients...
+                </div>
+              ) : clients.length === 0 ? (
+                <div className="p-3 bg-amber-900/30 border border-amber-800 rounded-lg text-amber-400 text-sm">
+                  <AlertTriangle className="w-4 h-4 inline mr-2" />
+                  No clients found. Add clients in the Client Manager tab first.
+                </div>
+              ) : (
+                <select
+                  value={selectedClientId || ''}
+                  onChange={(e) => setSelectedClientId(e.target.value ? parseInt(e.target.value) : null)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                >
+                  <option value="">-- Select a client --</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.first_name} {client.last_name} 
+                      {client.company && ` (${client.company})`}
+                      {client.vip_level !== 'standard' && ` - ${client.vip_level.toUpperCase()}`}
+                    </option>
+                  ))}
+                </select>
+              )}
+              
+              {selectedClientId && (
+                <div className="mt-2 p-3 bg-slate-800 rounded-lg border border-slate-700">
+                  {(() => {
+                    const client = clients.find(c => c.id === selectedClientId);
+                    if (!client) return null;
+                    return (
+                      <div className="text-sm">
+                        <div className="font-medium text-white">
+                          {client.first_name} {client.last_name}
+                          {client.vip_level === 'platinum' && <span className="ml-2 text-purple-400">💎</span>}
+                          {client.vip_level === 'vip' && <span className="ml-2 text-amber-400">⭐</span>}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {client.email} • {client.phone}
+                        </div>
+                        <div className="text-xs text-emerald-400 mt-2">
+                          ✓ Reservation will be under this name - no transfer needed
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -779,7 +907,9 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                     <div className="absolute inset-0 bg-emerald-500 blur-xl opacity-30 rounded-full"></div>
                     <CheckCircle2 className="w-16 h-16 text-emerald-500 relative" />
                   </div>
-                  <h4 className="text-2xl font-bold text-white mb-2">Reservation Confirmed! 🎉</h4>
+                  <h4 className="text-2xl font-bold text-white mb-2">
+                    {bookingMode === 'concierge' ? '🎩 Concierge Booking Confirmed!' : 'Reservation Confirmed!'} 🎉
+                  </h4>
                   <p className="text-emerald-400 font-mono mb-4">
                     {result.confirmation || result.confirmationCode || result.resy_token || 'Success'}
                   </p>
@@ -788,6 +918,37 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                       <p><strong className="text-white">{selectedVenue?.name || platformId}</strong></p>
                       <p>{date} at {result.bookedTime || preferredTime} • {partySize} guests</p>
                       <p className="text-xs mt-2 text-slate-600">Platform: {currentPlatform.label}</p>
+                      
+                      {/* Concierge mode details */}
+                      {bookingMode === 'concierge' && (result as any).bookedUnderName && (
+                        <div className="mt-3 pt-3 border-t border-slate-700">
+                          <p className="text-emerald-400 flex items-center gap-1">
+                            <Briefcase className="w-3 h-3" />
+                            Booked under: <strong>{(result as any).bookedUnderName}</strong>
+                          </p>
+                          <p className="text-xs text-emerald-300 mt-1">
+                            ✓ No transfer needed - reservation is already in client's name
+                          </p>
+                        </div>
+                      )}
+                      
+                      {/* Standard mode - needs transfer */}
+                      {bookingMode === 'standard' && (result as any).identityName && (
+                        <div className="mt-3 pt-3 border-t border-slate-700">
+                          <p className="text-blue-400">
+                            Booked under: <strong>{(result as any).identityName}</strong>
+                          </p>
+                          <p className="text-xs text-amber-400 mt-1">
+                            ⚠️ Transfer required to complete sale on AppointmentTrader
+                          </p>
+                        </div>
+                      )}
+                      
+                      {(result as any).transferId && (
+                        <p className="text-xs text-slate-500 mt-2">
+                          Transfer ID: #{(result as any).transferId}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </>

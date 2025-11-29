@@ -70,6 +70,11 @@ export interface SevenRoomsAcquisitionRequest {
   time: string; // HH:MM (24h format)
   partySize: number;
   timeFlexibility?: number; // Minutes
+  // Client info for concierge bookings (overrides default identity)
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
 }
 
 // ============================================
@@ -198,18 +203,29 @@ class SevenRoomsApiClient {
 
   /**
    * Complete reservation booking
+   * Optionally pass client details for concierge bookings
    */
   async makeReservation(
     venueSlug: string,
     slot: SevenRoomsSlot,
     partySize: number,
-    details?: any
+    details?: any,
+    clientInfo?: { firstName: string; lastName: string; email: string; phone: string }
   ): Promise<SevenRoomsBookingResult> {
-    if (!this.email || !this.firstName || !this.lastName) {
+    // Use client info if provided, otherwise default to configured credentials
+    const bookingFirstName = clientInfo?.firstName || this.firstName;
+    const bookingLastName = clientInfo?.lastName || this.lastName;
+    const bookingEmail = clientInfo?.email || this.email;
+    const bookingPhone = clientInfo?.phone || this.phone;
+
+    if (!bookingEmail || !bookingFirstName || !bookingLastName) {
       return { success: false, error: 'User info not configured (name, email)' };
     }
 
     console.log(`[SevenRoomsAPI] Booking ${venueSlug} at ${slot.time} for ${partySize}`);
+    if (clientInfo) {
+      console.log(`[SevenRoomsAPI] Concierge booking for: ${bookingFirstName} ${bookingLastName}`);
+    }
 
     try {
       // SevenRooms booking requires a session/hold first
@@ -224,10 +240,10 @@ class SevenRoomsApiClient {
           access_persistent_id: slot.accessPersistentId,
           party_size: partySize,
           time_slot: slot.time,
-          first_name: this.firstName,
-          last_name: this.lastName,
-          email: this.email,
-          phone_number: this.phone,
+          first_name: bookingFirstName,
+          last_name: bookingLastName,
+          email: bookingEmail,
+          phone_number: bookingPhone,
           notes: '',
           channel: 'SEVENROOMS_WIDGET',
         },
@@ -266,9 +282,10 @@ class SevenRoomsApiClient {
 
   /**
    * Full acquisition flow - find best slot and book it
+   * Supports concierge bookings with client info override
    */
   async acquire(request: SevenRoomsAcquisitionRequest): Promise<SevenRoomsBookingResult> {
-    const { venueSlug, date, time, partySize, timeFlexibility = 60 } = request;
+    const { venueSlug, date, time, partySize, timeFlexibility = 60, firstName, lastName, email, phone } = request;
 
     console.log(`[SevenRoomsAPI] 🎯 Starting acquisition for ${venueSlug}`);
 
@@ -299,8 +316,13 @@ class SevenRoomsApiClient {
       // Step 3: Get reservation details
       const details = await this.getReservationDetails(venueSlug, bestSlot, partySize);
 
-      // Step 4: Make the reservation
-      return await this.makeReservation(venueSlug, bestSlot, partySize, details);
+      // Step 4: Prepare client info for concierge booking if provided
+      const clientInfo = firstName && lastName && email && phone
+        ? { firstName, lastName, email, phone }
+        : undefined;
+
+      // Step 5: Make the reservation
+      return await this.makeReservation(venueSlug, bestSlot, partySize, details, clientInfo);
     } catch (error: any) {
       return { success: false, error: error.message };
     }

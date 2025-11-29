@@ -34,16 +34,28 @@ export interface Transfer {
   // Status
   status: 'ACQUIRED' | 'LISTED' | 'SOLD' | 'TRANSFER_PENDING' | 'TRANSFERRED' | 'COMPLETED';
   
-  // Transfer details
+  // Booking type & identity
+  booking_type?: 'standard' | 'concierge' | 'speculative';
+  booked_under_name?: string; // Name the reservation is under
+  
+  // Transfer details (only for standard bookings)
   transfer_method?: 'NAME_CHANGE' | 'CANCEL_REBOOK' | 'PLATFORM_TRANSFER' | 'SHOW_UP_TOGETHER';
   transfer_deadline?: Date;
   transfer_completed_at?: Date;
   transfer_notes?: string;
   
+  // Identity tracking (standard mode)
   booking_identity_id?: number;
+  
+  // Concierge tracking
+  client_id?: number;
+  service_fee?: number;
+  
   created_at: Date;
   updated_at: Date;
 }
+
+export type BookingType = NonNullable<Transfer['booking_type']>;
 
 export type TransferStatus = Transfer['status'];
 export type TransferMethod = NonNullable<Transfer['transfer_method']>;
@@ -57,6 +69,7 @@ class TransferTracker {
   
   /**
    * Create a new transfer record when a reservation is acquired
+   * Supports both STANDARD and CONCIERGE booking modes
    */
   async createTransfer(data: {
     portfolio_item_id?: string;
@@ -67,13 +80,24 @@ class TransferTracker {
     party_size: number;
     confirmation_number?: string;
     booking_identity_id?: number;
+    // New concierge fields
+    booking_type?: BookingType;
+    client_id?: number;
+    booked_under_name?: string;
+    service_fee?: number;
+    status?: Transfer['status'];
   }): Promise<Transfer> {
+    // For concierge bookings, default to COMPLETED (no transfer needed)
+    const status = data.status || (data.booking_type === 'concierge' ? 'COMPLETED' : 'ACQUIRED');
+    const bookingType = data.booking_type || 'standard';
+    
     const result = await this.getPool().query(`
       INSERT INTO transfers (
         portfolio_item_id, restaurant_name, platform,
         reservation_date, reservation_time, party_size,
-        confirmation_number, booking_identity_id, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACQUIRED')
+        confirmation_number, booking_identity_id, status,
+        booking_type, client_id, booked_under_name, service_fee
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
     `, [
       data.portfolio_item_id,
@@ -83,10 +107,20 @@ class TransferTracker {
       data.reservation_time,
       data.party_size,
       data.confirmation_number,
-      data.booking_identity_id
+      data.booking_identity_id,
+      status,
+      bookingType,
+      data.client_id,
+      data.booked_under_name,
+      data.service_fee
     ]);
     
-    console.log(`[TransferTracker] Created transfer for ${data.restaurant_name}`);
+    const modeEmoji = bookingType === 'concierge' ? '🎩' : '📝';
+    console.log(`[TransferTracker] ${modeEmoji} Created ${bookingType} transfer for ${data.restaurant_name}`);
+    if (data.booked_under_name) {
+      console.log(`[TransferTracker]   Booked under: ${data.booked_under_name}`);
+    }
+    
     return result.rows[0];
   }
   

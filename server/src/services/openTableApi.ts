@@ -79,6 +79,20 @@ export interface OpenTableAcquisitionRequest {
   timeFlexibility?: number; // Minutes
 }
 
+// Professional Profile booking - book for a specific diner from your list
+export interface OpenTableProfessionalBookingRequest extends OpenTableAcquisitionRequest {
+  // Client details for Professional Profile booking
+  dinerFirstName: string;
+  dinerLastName: string;
+  dinerEmail?: string;
+  dinerPhone?: string;
+}
+
+export interface OpenTableProfessionalBookingResult extends OpenTableBookingResult {
+  bookedUnderName?: string;
+  bookedTime?: string;
+}
+
 // ============================================
 // API CLIENT
 // ============================================
@@ -320,6 +334,216 @@ class OpenTableApiClient {
       console.error('[OpenTableAPI] Get restaurant info error:', error.message);
       return null;
     }
+  }
+
+  // ============================================
+  // PROFESSIONAL PROFILE BOOKING
+  // ============================================
+  //
+  // For OpenTable Professional Profile accounts, you can:
+  // - Book reservations under OTHER PEOPLE'S names
+  // - Add diners to your "diner list" 
+  // - Select which diner to book for during checkout
+  //
+  // This enables the concierge model:
+  // - Client pays you
+  // - You add them to your diner list
+  // - You book under THEIR name
+  // - No transfer needed!
+  //
+  // To enable: Go to Account Details, check 
+  // "I am an administrative professional who books reservations for others"
+  // ============================================
+
+  /**
+   * Book a reservation for a client (Professional Profile Mode)
+   * 
+   * This method is for Professional Profile accounts.
+   * The reservation appears under the DINER's name, not yours.
+   * 
+   * Prerequisites:
+   * 1. Enable Professional Profile in OpenTable account settings
+   * 2. Add the diner to your "diner list" (Manage your diners)
+   */
+  async bookForDiner(request: OpenTableProfessionalBookingRequest): Promise<OpenTableProfessionalBookingResult> {
+    const { 
+      restaurantId, date, time, partySize, timeFlexibility = 60,
+      dinerFirstName, dinerLastName, dinerEmail, dinerPhone
+    } = request;
+
+    console.log(`[OpenTableAPI] 🎩 PROFESSIONAL MODE - Booking for ${dinerFirstName} ${dinerLastName}`);
+    console.log(`[OpenTableAPI] Restaurant: ${restaurantId}, Date: ${date}, Time: ${time}`);
+
+    try {
+      // Step 1: Find available slots
+      const slots = await this.findSlots(restaurantId, date, time, partySize);
+
+      if (!slots.length) {
+        return { success: false, error: 'No slots available' };
+      }
+
+      // Step 2: Find the best matching slot
+      let bestSlot = slots[0];
+      let bestDiff = Math.abs(slots[0].timeOffsetMinutes);
+
+      for (const slot of slots) {
+        const diff = Math.abs(slot.timeOffsetMinutes);
+        if (diff <= timeFlexibility && diff < bestDiff) {
+          bestDiff = diff;
+          bestSlot = slot;
+        }
+      }
+
+      console.log(`[OpenTableAPI] Selected slot: ${bestSlot.dateTime}`);
+
+      // Step 3: Make the professional booking
+      const result = await this.makeProfessionalReservation(
+        restaurantId, 
+        bestSlot, 
+        date, 
+        time, 
+        partySize,
+        {
+          firstName: dinerFirstName,
+          lastName: dinerLastName,
+          email: dinerEmail,
+          phone: dinerPhone,
+        }
+      );
+
+      if (result.success) {
+        return {
+          ...result,
+          bookedUnderName: `${dinerFirstName} ${dinerLastName}`,
+          bookedTime: bestSlot.dateTime,
+        };
+      }
+
+      return result;
+    } catch (error: any) {
+      return { 
+        success: false, 
+        error: error.message 
+      };
+    }
+  }
+
+  /**
+   * Make a reservation under a diner's name (Professional Profile)
+   */
+  private async makeProfessionalReservation(
+    restaurantId: number,
+    slot: OpenTableSlot,
+    date: string,
+    time: string,
+    partySize: number,
+    diner: {
+      firstName: string;
+      lastName: string;
+      email?: string;
+      phone?: string;
+    }
+  ): Promise<OpenTableProfessionalBookingResult> {
+    if (!this.csrfToken) {
+      return { success: false, error: 'OPENTABLE_CSRF_TOKEN not configured' };
+    }
+
+    console.log(`[OpenTableAPI] Making professional reservation for: ${diner.firstName} ${diner.lastName}`);
+
+    try {
+      // For Professional Profile accounts, we use the diner's info instead of our own
+      const response = await axios.post(
+        `${OPENTABLE_BASE_URL}/booking/make-reservation`,
+        {
+          restaurantId: restaurantId,
+          slotAvailabilityToken: slot.slotAvailabilityToken,
+          slotHash: slot.slotHash,
+          isModify: false,
+          reservationDateTime: `${date}T${time}`,
+          partySize: partySize,
+          // Use diner's info instead of our own
+          firstName: diner.firstName,
+          lastName: diner.lastName,
+          email: diner.email || this.email, // Fallback to our email if not provided
+          country: 'US',
+          reservationType: 'Standard',
+          reservationAttribute: 'default',
+          additionalServiceFees: [],
+          tipAmount: 0,
+          tipPercent: 0,
+          pointsType: 'Standard',
+          points: 100,
+          diningAreaId: 1,
+          phoneNumber: diner.phone || this.phone, // Fallback to our phone if not provided
+          phoneNumberCountryId: 'US',
+          optInEmailRestaurant: false,
+          // Professional Profile flag
+          isBookingOnBehalfOf: true,
+        },
+        { headers: this.getHeaders(), timeout: 30000 }
+      );
+
+      console.log('[OpenTableAPI] ✅ Professional reservation successful!');
+      return {
+        success: true,
+        confirmationNumber: response.data.confirmationNumber || response.data.rid,
+        bookedUnderName: `${diner.firstName} ${diner.lastName}`,
+        details: response.data,
+      };
+    } catch (error: any) {
+      console.error('[OpenTableAPI] ❌ Professional booking failed:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        details: error.response?.data,
+      };
+    }
+  }
+
+  /**
+   * Add a diner to your Professional Profile's diner list
+   * 
+   * Note: This may need to be done manually through the OpenTable website
+   * as the API for managing diners may not be publicly accessible.
+   * 
+   * Manual steps:
+   * 1. Go to opentable.com and log in
+   * 2. Click Profile Icon → My Profile → Account Details
+   * 3. Under "Professional profile", click "Manage your diners"
+   * 4. Add the diner's name
+   */
+  async addDinerToList(firstName: string, lastName: string): Promise<{ success: boolean; error?: string; note?: string }> {
+    console.log(`[OpenTableAPI] Adding diner to list: ${firstName} ${lastName}`);
+
+    // Note: The actual API endpoint for managing diners may not be publicly documented
+    // For now, we'll return instructions for manual addition
+    return {
+      success: false,
+      error: 'Automatic diner management not yet implemented',
+      note: `To add ${firstName} ${lastName} to your diner list:\n` +
+            `1. Go to opentable.com and log in\n` +
+            `2. Click Profile Icon → My Profile → Account Details\n` +
+            `3. Under "Professional profile", click "Manage your diners"\n` +
+            `4. Add the diner's name: ${firstName} ${lastName}`
+    };
+  }
+
+  /**
+   * Create a client with custom credentials
+   * Used for testing or multi-account scenarios
+   */
+  withCredentials(
+    csrfToken: string, 
+    userInfo: { firstName: string; lastName: string; email: string; phone?: string }
+  ): OpenTableApiClient {
+    const client = new OpenTableApiClient();
+    // Override with provided credentials
+    (client as any).csrfToken = csrfToken;
+    (client as any).firstName = userInfo.firstName;
+    (client as any).lastName = userInfo.lastName;
+    (client as any).email = userInfo.email;
+    (client as any).phone = userInfo.phone || '';
+    return client;
   }
 }
 

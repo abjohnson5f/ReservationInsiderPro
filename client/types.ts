@@ -140,9 +140,88 @@ export interface IdentityStats {
   remaining: number;
 }
 
+// ============================================
+// CONCIERGE CLIENT TYPES
+// ============================================
+// Clients are people we book reservations FOR.
+// This enables the concierge business model where:
+// - Reservation is under CLIENT'S name, not ours
+// - No flagging risk (we're just the booking agent)
+// - No transfer needed (already in client's name)
+
+export type VipLevel = 'standard' | 'vip' | 'platinum';
+
+export interface Client {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  company?: string;
+  notes?: string;
+  vip_level: VipLevel;
+  
+  // Platform sync status
+  synced_to_opentable: boolean;
+  synced_to_resy: boolean;
+  opentable_diner_id?: string;
+  
+  // Analytics
+  total_bookings: number;
+  successful_bookings: number;
+  total_revenue: number;
+  last_booking_date?: string;
+  
+  // Preferences
+  preferred_cuisines?: string[];
+  dietary_restrictions?: string[];
+  preferred_party_size: number;
+  preferred_time_slot?: string;
+  
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientBookingRequest {
+  id: number;
+  client_id: number;
+  restaurant_name: string;
+  platform?: string;
+  venue_id?: string;
+  desired_date: string;
+  desired_time?: string;
+  time_flexibility: number;
+  party_size: number;
+  special_requests?: string;
+  occasion?: string;
+  max_service_fee?: number;
+  status: 'pending' | 'searching' | 'acquired' | 'failed' | 'cancelled';
+  attempts: number;
+  last_attempt_at?: string;
+  acquired_at?: string;
+  transfer_id?: number;
+  failure_reason?: string;
+  created_at: string;
+  updated_at: string;
+  expires_at?: string;
+}
+
+export interface ClientStats {
+  totalClients: number;
+  vipClients: number;
+  platinumClients: number;
+  totalBookings: number;
+  totalRevenue: number;
+  avgBookingsPerClient: number;
+  clientsByVipLevel: { level: string; count: number }[];
+  topClients: Client[];
+  recentClients: Client[];
+}
+
 // Transfer Workflow Types
 export type TransferStatus = 'ACQUIRED' | 'LISTED' | 'SOLD' | 'TRANSFER_PENDING' | 'TRANSFERRED' | 'COMPLETED';
 export type TransferMethod = 'NAME_CHANGE' | 'CANCEL_REBOOK' | 'PLATFORM_TRANSFER' | 'SHOW_UP_TOGETHER';
+export type BookingType = 'standard' | 'concierge' | 'speculative';
 
 export interface Transfer {
   id: number;
@@ -171,13 +250,23 @@ export interface Transfer {
   // Status
   status: TransferStatus;
   
-  // Transfer details
+  // Booking type & identity
+  booking_type?: BookingType;
+  booked_under_name?: string; // Name the reservation is under
+  
+  // Transfer details (only for standard bookings)
   transfer_method?: TransferMethod;
   transfer_deadline?: string;
   transfer_completed_at?: string;
   transfer_notes?: string;
   
+  // Identity tracking
   booking_identity_id?: number;
+  
+  // Concierge tracking
+  client_id?: number;
+  service_fee?: number;
+  
   created_at: string;
   updated_at: string;
 }

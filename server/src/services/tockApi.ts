@@ -81,6 +81,11 @@ export interface TockAcquisitionRequest {
   time?: string; // HH:MM (24h format) - optional since Tock often has fixed times
   partySize: number;
   experienceId?: string; // Specific experience to book
+  // Client info for concierge bookings (overrides default identity)
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
 }
 
 // ============================================
@@ -236,22 +241,35 @@ class TockApiClient {
 
   /**
    * Checkout cart
+   * Optionally pass client info for concierge bookings
    */
-  async checkout(cartId: string): Promise<TockBookingResult> {
+  async checkout(
+    cartId: string,
+    clientInfo?: { firstName: string; lastName: string; email: string; phone: string }
+  ): Promise<TockBookingResult> {
     if (!this.authToken) {
       return { success: false, error: 'TOCK_AUTH_TOKEN not configured' };
     }
 
     console.log(`[TockAPI] Checking out cart ${cartId}`);
+    if (clientInfo) {
+      console.log(`[TockAPI] Concierge booking for: ${clientInfo.firstName} ${clientInfo.lastName}`);
+    }
 
     try {
-      // Tock checkout typically requires payment info
-      // This is a simplified version
+      // Build checkout payload with guest info
+      const checkoutPayload: any = {};
+      
+      if (clientInfo) {
+        checkoutPayload.guest_first_name = clientInfo.firstName;
+        checkoutPayload.guest_last_name = clientInfo.lastName;
+        checkoutPayload.guest_email = clientInfo.email;
+        checkoutPayload.guest_phone = clientInfo.phone;
+      }
+
       const response = await axios.post(
         `${TOCK_API_URL}/api/consumer/cart/${cartId}/checkout`,
-        {
-          // Payment info would go here
-        },
+        checkoutPayload,
         {
           headers: {
             ...this.getHeaders(true),
@@ -278,9 +296,10 @@ class TockApiClient {
 
   /**
    * Full acquisition flow
+   * Supports concierge bookings with client info override
    */
   async acquire(request: TockAcquisitionRequest): Promise<TockBookingResult> {
-    const { venueSlug, date, time, partySize, experienceId } = request;
+    const { venueSlug, date, time, partySize, experienceId, firstName, lastName, email, phone } = request;
 
     console.log(`[TockAPI] 🎯 Starting acquisition for ${venueSlug}`);
 
@@ -326,8 +345,13 @@ class TockApiClient {
         return { success: false, error: 'Failed to add to cart' };
       }
 
-      // Step 4: Checkout
-      return await this.checkout(cartId);
+      // Step 4: Prepare client info for concierge booking if provided
+      const clientInfo = firstName && lastName && email && phone
+        ? { firstName, lastName, email, phone }
+        : undefined;
+
+      // Step 5: Checkout
+      return await this.checkout(cartId, clientInfo);
     } catch (error: any) {
       return { success: false, error: error.message };
     }

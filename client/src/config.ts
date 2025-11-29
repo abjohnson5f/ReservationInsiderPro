@@ -24,6 +24,9 @@ export const IDENTITIES_API = `${API_BASE}/identities`;
 // Transfers API
 export const TRANSFERS_API = `${API_BASE}/transfers`;
 
+// Clients API
+export const CLIENTS_API = `${API_BASE}/clients`;
+
 // Portfolio API
 export const PORTFOLIO_API = `${API_BASE}/portfolio`;
 
