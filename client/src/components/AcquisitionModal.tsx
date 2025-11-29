@@ -1,10 +1,12 @@
 /**
- * Acquisition Modal - PRODUCTION BOOKING UI
+ * Acquisition Modal - MULTI-PLATFORM BOOKING UI
  * 
- * This component provides a full booking workflow:
- * 1. Search for a restaurant (get venueId)
- * 2. Check available slots
- * 3. Execute acquisition via Resy API
+ * Supports: Resy, OpenTable, SevenRooms, Tock
+ * 
+ * Features:
+ * - Platform selector with config status
+ * - Credential validation per platform
+ * - Unified search and booking flow
  */
 
 import React, { useState, useEffect } from 'react';
@@ -21,11 +23,75 @@ import {
   Zap,
   RefreshCw,
   Settings2,
-  ExternalLink
+  ExternalLink,
+  Shield,
+  XCircle
 } from 'lucide-react';
 import { ResySlot, ResyVenue, AcquisitionResult } from '../../types';
 
 const API_BASE = 'http://localhost:3000/api/sniper';
+
+type Platform = 'resy' | 'opentable' | 'sevenrooms' | 'tock';
+
+interface PlatformConfig {
+  name: string;
+  label: string;
+  color: string;
+  bg: string;
+  icon: string;
+  idField: string;
+  idPlaceholder: string;
+  searchable: boolean;
+}
+
+const PLATFORMS: Record<Platform, PlatformConfig> = {
+  resy: {
+    name: 'resy',
+    label: 'Resy',
+    color: 'text-rose-400',
+    bg: 'bg-rose-500/20',
+    icon: '🍷',
+    idField: 'Venue ID',
+    idPlaceholder: 'e.g., 834',
+    searchable: true,
+  },
+  opentable: {
+    name: 'opentable',
+    label: 'OpenTable',
+    color: 'text-red-400',
+    bg: 'bg-red-500/20',
+    icon: '🍽️',
+    idField: 'Restaurant ID',
+    idPlaceholder: 'e.g., 1234567',
+    searchable: false,
+  },
+  sevenrooms: {
+    name: 'sevenrooms',
+    label: 'SevenRooms',
+    color: 'text-purple-400',
+    bg: 'bg-purple-500/20',
+    icon: '✨',
+    idField: 'Venue Slug',
+    idPlaceholder: 'e.g., carbone-nyc',
+    searchable: false,
+  },
+  tock: {
+    name: 'tock',
+    label: 'Tock',
+    color: 'text-teal-400',
+    bg: 'bg-teal-500/20',
+    icon: '🎫',
+    idField: 'Venue Slug',
+    idPlaceholder: 'e.g., alinea',
+    searchable: false,
+  },
+};
+
+interface PlatformStatus {
+  ready: boolean;
+  details?: any;
+  required?: string[];
+}
 
 interface AcquisitionModalProps {
   isOpen: boolean;
@@ -34,6 +100,7 @@ interface AcquisitionModalProps {
   initialDate?: string;
   initialTime?: string;
   initialGuests?: number;
+  initialPlatform?: Platform;
   onSuccess?: (result: AcquisitionResult) => void;
 }
 
@@ -46,50 +113,112 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
   initialDate = '',
   initialTime = '19:00',
   initialGuests = 2,
+  initialPlatform = 'resy',
   onSuccess,
 }) => {
-  // State
+  // Platform state
+  const [platform, setPlatform] = useState<Platform>(initialPlatform);
+  const [platformStatuses, setPlatformStatuses] = useState<Record<Platform, PlatformStatus>>({
+    resy: { ready: false },
+    opentable: { ready: false },
+    sevenrooms: { ready: false },
+    tock: { ready: false },
+  });
+  const [validating, setValidating] = useState<Platform | null>(null);
+  const [validationResults, setValidationResults] = useState<Record<Platform, { success: boolean; message: string } | null>>({
+    resy: null,
+    opentable: null,
+    sevenrooms: null,
+    tock: null,
+  });
+
+  // Search/booking state
   const [step, setStep] = useState<Step>('search');
   const [searchQuery, setSearchQuery] = useState(initialRestaurantName);
   const [venues, setVenues] = useState<ResyVenue[]>([]);
   const [selectedVenue, setSelectedVenue] = useState<ResyVenue | null>(null);
   const [slots, setSlots] = useState<ResySlot[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<ResySlot | null>(null);
   const [date, setDate] = useState(initialDate || new Date().toISOString().split('T')[0]);
   const [partySize, setPartySize] = useState(initialGuests);
   const [preferredTime, setPreferredTime] = useState(initialTime);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AcquisitionResult | null>(null);
-  const [configStatus, setConfigStatus] = useState<{ready: boolean; hasAuth: boolean; hasPayment: boolean} | null>(null);
+  
+  // Platform-specific IDs (for non-searchable platforms)
+  const [platformId, setPlatformId] = useState('');
 
-  // Check configuration on mount
+  // Fetch all platform statuses on mount
   useEffect(() => {
     if (isOpen) {
-      checkConfig();
+      fetchAllPlatformStatuses();
     }
   }, [isOpen]);
 
-  // Reset state when opened with new initial values
+  // Reset state when opened
   useEffect(() => {
     if (isOpen) {
       setSearchQuery(initialRestaurantName);
       setDate(initialDate || new Date().toISOString().split('T')[0]);
       setPreferredTime(initialTime);
       setPartySize(initialGuests);
+      setPlatform(initialPlatform);
       setStep('search');
       setResult(null);
       setError(null);
+      setVenues([]);
+      setSelectedVenue(null);
+      setSlots([]);
+      setPlatformId('');
     }
-  }, [isOpen, initialRestaurantName, initialDate, initialTime, initialGuests]);
+  }, [isOpen, initialRestaurantName, initialDate, initialTime, initialGuests, initialPlatform]);
 
-  const checkConfig = async () => {
+  const fetchAllPlatformStatuses = async () => {
     try {
-      const response = await fetch(`${API_BASE}/resy/status`);
+      const response = await fetch(`${API_BASE}/platforms/status`);
       const data = await response.json();
-      setConfigStatus(data);
+      
+      if (data.platforms) {
+        setPlatformStatuses({
+          resy: data.platforms.resy,
+          opentable: data.platforms.opentable,
+          sevenrooms: data.platforms.sevenrooms,
+          tock: data.platforms.tock,
+        });
+      }
     } catch (err) {
-      console.error('Failed to check config:', err);
+      console.error('Failed to fetch platform statuses:', err);
+    }
+  };
+
+  const validateCredentials = async (p: Platform) => {
+    setValidating(p);
+    setValidationResults(prev => ({ ...prev, [p]: null }));
+    
+    try {
+      const response = await fetch(`${API_BASE}/${p}/status`);
+      const data = await response.json();
+      
+      setValidationResults(prev => ({
+        ...prev,
+        [p]: {
+          success: data.ready,
+          message: data.message || (data.ready ? 'Credentials valid' : 'Configuration incomplete'),
+        },
+      }));
+      
+      // Refresh status
+      await fetchAllPlatformStatuses();
+    } catch (err: any) {
+      setValidationResults(prev => ({
+        ...prev,
+        [p]: {
+          success: false,
+          message: 'Failed to validate: ' + err.message,
+        },
+      }));
+    } finally {
+      setValidating(null);
     }
   };
 
@@ -118,21 +247,37 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
     }
   };
 
-  const fetchSlots = async (venue: ResyVenue) => {
-    setSelectedVenue(venue);
+  const fetchSlots = async (venue?: ResyVenue) => {
     setIsLoading(true);
     setError(null);
     
     try {
-      const response = await fetch(
-        `${API_BASE}/resy/slots?venueId=${venue.id}&date=${date}&partySize=${partySize}`
-      );
+      let url: string;
+      
+      switch (platform) {
+        case 'resy':
+          if (!venue) return;
+          setSelectedVenue(venue);
+          url = `${API_BASE}/resy/slots?venueId=${venue.id}&date=${date}&partySize=${partySize}`;
+          break;
+        case 'opentable':
+          url = `${API_BASE}/opentable/slots?restaurantId=${platformId}&date=${date}&time=${preferredTime}&partySize=${partySize}`;
+          break;
+        case 'sevenrooms':
+          url = `${API_BASE}/sevenrooms/slots?venueSlug=${platformId}&date=${date}&time=${preferredTime}&partySize=${partySize}`;
+          break;
+        case 'tock':
+          url = `${API_BASE}/tock/slots?venueSlug=${platformId}&date=${date}&partySize=${partySize}`;
+          break;
+      }
+      
+      const response = await fetch(url);
       const data = await response.json();
       
       if (data.success) {
-        setSlots(data.slots);
+        setSlots(data.slots || []);
         setStep('slots');
-        if (data.slots.length === 0) {
+        if ((data.slots || []).length === 0) {
           setError('No slots available for this date. Try a different date.');
         }
       } else {
@@ -146,40 +291,70 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
   };
 
   const executeAcquisition = async (slot?: ResySlot) => {
-    if (!selectedVenue) return;
-    
     setStep('acquiring');
     setIsLoading(true);
     setError(null);
     
     try {
-      let response;
+      let body: any = {
+        date,
+        partySize,
+        time: preferredTime,
+        timeFlexibility: 60,
+      };
       
-      if (slot) {
-        // Book specific slot
-        response = await fetch(`${API_BASE}/resy/book-slot`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            configId: slot.config_id,
+      let url: string;
+      
+      switch (platform) {
+        case 'resy':
+          if (slot) {
+            url = `${API_BASE}/resy/book-slot`;
+            body = { configId: slot.config_id, date, partySize };
+          } else {
+            url = `${API_BASE}/resy/acquire`;
+            body = {
+              venueId: selectedVenue?.id || platformId,
+              date,
+              partySize,
+              preferredTime,
+              timeFlexibility: 60,
+            };
+          }
+          break;
+        case 'opentable':
+          url = `${API_BASE}/opentable/acquire`;
+          body = {
+            restaurantId: parseInt(platformId),
             date,
+            time: slot?.time || preferredTime,
             partySize,
-          }),
-        });
-      } else {
-        // Auto-select best slot
-        response = await fetch(`${API_BASE}/resy/acquire`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            venueId: selectedVenue.id,
+          };
+          break;
+        case 'sevenrooms':
+          url = `${API_BASE}/sevenrooms/acquire`;
+          body = {
+            venueSlug: platformId,
             date,
+            time: slot?.time || preferredTime,
             partySize,
-            preferredTime,
-            timeFlexibility: 60,
-          }),
-        });
+          };
+          break;
+        case 'tock':
+          url = `${API_BASE}/tock/acquire`;
+          body = {
+            venueSlug: platformId,
+            date,
+            time: slot?.time || preferredTime,
+            partySize,
+          };
+          break;
       }
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
       
       const data = await response.json();
       setResult(data);
@@ -196,6 +371,9 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
     }
   };
 
+  const currentPlatform = PLATFORMS[platform];
+  const currentStatus = platformStatuses[platform];
+
   if (!isOpen) return null;
 
   return (
@@ -204,7 +382,7 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
       onClick={onClose}
     >
       <div 
-        className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-2xl shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-slate-900 rounded-xl border border-slate-700 w-full max-w-3xl shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -215,7 +393,7 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-white">Acquisition Control</h3>
-              <p className="text-xs text-slate-500">Resy Direct API • Production Mode</p>
+              <p className="text-xs text-slate-500">Multi-Platform • Production Mode</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white p-2">
@@ -223,29 +401,108 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
           </button>
         </div>
 
+        {/* Platform Selector */}
+        <div className="p-4 border-b border-slate-800 bg-slate-950/50">
+          <label className="text-xs text-slate-500 font-bold uppercase mb-3 block">Select Platform</label>
+          <div className="grid grid-cols-4 gap-2">
+            {(Object.keys(PLATFORMS) as Platform[]).map((p) => {
+              const config = PLATFORMS[p];
+              const status = platformStatuses[p];
+              const validation = validationResults[p];
+              const isSelected = platform === p;
+              
+              return (
+                <button
+                  key={p}
+                  onClick={() => {
+                    setPlatform(p);
+                    setStep('search');
+                    setVenues([]);
+                    setSlots([]);
+                    setSelectedVenue(null);
+                    setError(null);
+                  }}
+                  className={`relative p-3 rounded-lg border transition-all ${
+                    isSelected 
+                      ? `${config.bg} border-current ${config.color}` 
+                      : 'bg-slate-800 border-slate-700 hover:border-slate-600'
+                  }`}
+                >
+                  <div className="text-lg mb-1">{config.icon}</div>
+                  <div className={`text-sm font-medium ${isSelected ? config.color : 'text-white'}`}>
+                    {config.label}
+                  </div>
+                  
+                  {/* Status indicator */}
+                  <div className="absolute top-2 right-2">
+                    {status?.ready ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-slate-600" />
+                    )}
+                  </div>
+                  
+                  {/* Validation loading */}
+                  {validating === p && (
+                    <div className="absolute inset-0 bg-slate-900/80 rounded-lg flex items-center justify-center">
+                      <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* Validate Credentials Button */}
+          <div className="mt-3 flex items-center justify-between">
+            <div className="text-xs text-slate-500">
+              {currentStatus?.ready ? (
+                <span className="text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> {currentPlatform.label} Ready
+                </span>
+              ) : (
+                <span className="text-amber-400 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> {currentPlatform.label} Not Configured
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => validateCredentials(platform)}
+              disabled={validating !== null}
+              className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 flex items-center gap-2 transition-colors"
+            >
+              <Shield className="w-3 h-3" />
+              Test Credentials
+            </button>
+          </div>
+          
+          {/* Validation Result */}
+          {validationResults[platform] && (
+            <div className={`mt-2 p-2 rounded-lg text-xs ${
+              validationResults[platform]!.success 
+                ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800'
+                : 'bg-red-900/30 text-red-400 border border-red-800'
+            }`}>
+              {validationResults[platform]!.message}
+            </div>
+          )}
+        </div>
+
         {/* Configuration Warning */}
-        {configStatus && !configStatus.ready && (
+        {!currentStatus?.ready && (
           <div className="mx-5 mt-5 p-4 bg-amber-900/30 border border-amber-800 rounded-lg">
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
               <div className="text-sm">
-                <p className="font-bold text-amber-400 mb-1">Configuration Required</p>
+                <p className="font-bold text-amber-400 mb-1">Configuration Required for {currentPlatform.label}</p>
                 <p className="text-amber-200/80 text-xs leading-relaxed">
-                  {!configStatus.hasAuth && (
-                    <>Add <code className="bg-slate-800 px-1 rounded">RESY_AUTH_TOKEN</code> to your .env file. </>
-                  )}
-                  {!configStatus.hasPayment && (
-                    <>Add <code className="bg-slate-800 px-1 rounded">RESY_PAYMENT_ID</code> to your .env file.</>
-                  )}
+                  Add the following to your Identity Manager or .env file:
                 </p>
-                <a 
-                  href="https://resy.com" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="text-xs text-amber-400 hover:text-amber-300 inline-flex items-center gap-1 mt-2"
-                >
-                  Get credentials from Resy <ExternalLink className="w-3 h-3" />
-                </a>
+                <ul className="text-xs text-amber-200/60 mt-2 space-y-1">
+                  {currentStatus?.required?.map((req, i) => (
+                    <li key={i}>• <code className="bg-slate-800 px-1 rounded">{req}</code></li>
+                  ))}
+                </ul>
               </div>
             </div>
           </div>
@@ -257,31 +514,52 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
           {/* Step 1: Search */}
           {step === 'search' && (
             <div className="space-y-4">
-              {/* Search Input */}
-              <div>
-                <label className="text-xs text-slate-500 font-bold uppercase mb-2 block">Search Restaurant</label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                    <input
-                      type="text"
-                      placeholder="e.g., Carbone, Don Angie, 4 Charles..."
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white placeholder:text-slate-600 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && searchVenues()}
-                    />
+              {/* For searchable platforms (Resy) */}
+              {currentPlatform.searchable ? (
+                <>
+                  <div>
+                    <label className="text-xs text-slate-500 font-bold uppercase mb-2 block">Search Restaurant</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                        <input
+                          type="text"
+                          placeholder="e.g., Carbone, Don Angie, 4 Charles..."
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white placeholder:text-slate-600 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && searchVenues()}
+                        />
+                      </div>
+                      <button
+                        onClick={searchVenues}
+                        disabled={isLoading || !searchQuery.trim()}
+                        className="px-6 py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                      >
+                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                        Search
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    onClick={searchVenues}
-                    disabled={isLoading || !searchQuery.trim()}
-                    className="px-6 py-3 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
-                  >
-                    {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                    Search
-                  </button>
+                </>
+              ) : (
+                /* For non-searchable platforms */
+                <div>
+                  <label className="text-xs text-slate-500 font-bold uppercase mb-2 block">
+                    {currentPlatform.idField}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={currentPlatform.idPlaceholder}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder:text-slate-600 focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                    value={platformId}
+                    onChange={(e) => setPlatformId(e.target.value)}
+                  />
+                  <p className="text-xs text-slate-600 mt-1">
+                    Find this in the restaurant's URL on {currentPlatform.label}
+                  </p>
                 </div>
-              </div>
+              )}
 
               {/* Date & Party Size */}
               <div className="grid grid-cols-3 gap-4">
@@ -323,6 +601,18 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                 </div>
               </div>
 
+              {/* Find Slots button for non-searchable platforms */}
+              {!currentPlatform.searchable && platformId && (
+                <button
+                  onClick={() => fetchSlots()}
+                  disabled={isLoading || !platformId.trim() || !currentStatus?.ready}
+                  className="w-full py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:from-slate-700 disabled:to-slate-700 text-white rounded-lg font-bold flex items-center justify-center gap-2"
+                >
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                  Find Available Slots
+                </button>
+              )}
+
               {/* Error */}
               {error && (
                 <div className="p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-400 text-sm flex items-center gap-2">
@@ -331,7 +621,7 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                 </div>
               )}
 
-              {/* Venue Results */}
+              {/* Venue Results (Resy only) */}
               {venues.length > 0 && (
                 <div className="space-y-2">
                   <label className="text-xs text-slate-500 font-bold uppercase">Select Venue ({venues.length} found)</label>
@@ -340,7 +630,8 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                       <button
                         key={venue.id}
                         onClick={() => fetchSlots(venue)}
-                        className="w-full p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-amber-500/50 rounded-lg text-left transition-all group"
+                        disabled={!currentStatus?.ready}
+                        className="w-full p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-amber-500/50 rounded-lg text-left transition-all group disabled:opacity-50"
                       >
                         <div className="flex justify-between items-start">
                           <div>
@@ -363,14 +654,23 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
           )}
 
           {/* Step 2: Available Slots */}
-          {step === 'slots' && selectedVenue && (
+          {step === 'slots' && (
             <div className="space-y-4">
-              {/* Selected Venue Info */}
+              {/* Selected Venue/Restaurant Info */}
               <div className="p-4 bg-slate-800 rounded-lg border border-slate-700">
                 <div className="flex justify-between items-start">
                   <div>
-                    <h4 className="font-bold text-white">{selectedVenue.name}</h4>
-                    <p className="text-xs text-slate-500">{selectedVenue.neighborhood}, {selectedVenue.city}</p>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm px-2 py-0.5 rounded ${currentPlatform.bg} ${currentPlatform.color}`}>
+                        {currentPlatform.icon} {currentPlatform.label}
+                      </span>
+                    </div>
+                    <h4 className="font-bold text-white mt-2">
+                      {selectedVenue?.name || platformId}
+                    </h4>
+                    {selectedVenue && (
+                      <p className="text-xs text-slate-500">{selectedVenue.neighborhood}, {selectedVenue.city}</p>
+                    )}
                   </div>
                   <button
                     onClick={() => {
@@ -385,6 +685,7 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                 </div>
                 <div className="flex gap-4 mt-3 text-xs text-slate-400">
                   <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {date}</span>
+                  <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {preferredTime}</span>
                   <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {partySize} guests</span>
                 </div>
               </div>
@@ -392,7 +693,7 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
               {/* Quick Acquire Button */}
               <button
                 onClick={() => executeAcquisition()}
-                disabled={!configStatus?.ready || isLoading}
+                disabled={!currentStatus?.ready || isLoading}
                 className="w-full p-4 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:from-slate-700 disabled:to-slate-700 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-amber-900/30"
               >
                 <Zap className="w-5 h-5" />
@@ -407,7 +708,7 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                       Or Select Specific Slot ({slots.length} available)
                     </label>
                     <button
-                      onClick={() => fetchSlots(selectedVenue)}
+                      onClick={() => fetchSlots(selectedVenue || undefined)}
                       className="text-xs text-slate-500 hover:text-amber-400 flex items-center gap-1"
                     >
                       <RefreshCw className="w-3 h-3" /> Refresh
@@ -417,15 +718,12 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                     {slots.map((slot, idx) => (
                       <button
                         key={idx}
-                        onClick={() => {
-                          setSelectedSlot(slot);
-                          executeAcquisition(slot);
-                        }}
-                        disabled={!configStatus?.ready}
+                        onClick={() => executeAcquisition(slot)}
+                        disabled={!currentStatus?.ready}
                         className="p-3 bg-slate-800 hover:bg-amber-900/30 border border-slate-700 hover:border-amber-500 rounded-lg text-center transition-all disabled:opacity-50"
                       >
                         <div className="font-mono font-bold text-white">{slot.time}</div>
-                        <div className="text-[10px] text-slate-500">{slot.table_type}</div>
+                        <div className="text-[10px] text-slate-500">{slot.table_type || 'Standard'}</div>
                         {slot.deposit && (
                           <div className="text-[10px] text-amber-500 mt-1">${slot.deposit} deposit</div>
                         )}
@@ -459,11 +757,11 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
           {step === 'acquiring' && (
             <div className="text-center py-12">
               <div className="relative inline-block mb-6">
-                <div className="absolute inset-0 bg-amber-500 blur-xl opacity-30 animate-pulse rounded-full"></div>
-                <Loader2 className="w-16 h-16 text-amber-500 animate-spin relative" />
+                <div className={`absolute inset-0 ${currentPlatform.color.replace('text-', 'bg-')} blur-xl opacity-30 animate-pulse rounded-full`}></div>
+                <Loader2 className={`w-16 h-16 ${currentPlatform.color} animate-spin relative`} />
               </div>
               <h4 className="text-xl font-bold text-white mb-2">Acquiring Reservation...</h4>
-              <p className="text-slate-500">Connecting to Resy API</p>
+              <p className="text-slate-500">Connecting to {currentPlatform.label} API</p>
               <div className="mt-6 space-y-2 text-xs text-slate-600 font-mono">
                 <div className="animate-pulse">→ Authenticating...</div>
                 <div className="animate-pulse" style={{animationDelay: '0.5s'}}>→ Securing slot...</div>
@@ -483,15 +781,13 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
                   </div>
                   <h4 className="text-2xl font-bold text-white mb-2">Reservation Confirmed! 🎉</h4>
                   <p className="text-emerald-400 font-mono mb-4">
-                    {result.confirmation || result.resy_token || 'Success'}
+                    {result.confirmation || result.confirmationCode || result.resy_token || 'Success'}
                   </p>
                   <div className="bg-slate-800 p-4 rounded-lg inline-block text-left">
                     <div className="text-sm text-slate-400">
-                      <p><strong className="text-white">{selectedVenue?.name}</strong></p>
-                      <p>{date} • {partySize} guests</p>
-                      {result.reservation_id && (
-                        <p className="font-mono text-xs mt-2 text-slate-500">ID: {result.reservation_id}</p>
-                      )}
+                      <p><strong className="text-white">{selectedVenue?.name || platformId}</strong></p>
+                      <p>{date} at {result.bookedTime || preferredTime} • {partySize} guests</p>
+                      <p className="text-xs mt-2 text-slate-600">Platform: {currentPlatform.label}</p>
                     </div>
                   </div>
                 </>
@@ -522,8 +818,8 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
         <div className="p-4 border-t border-slate-800 bg-slate-950/50 flex justify-between items-center">
           <div className="text-xs text-slate-600 flex items-center gap-2">
             <Settings2 className="w-3 h-3" />
-            {configStatus?.ready ? (
-              <span className="text-emerald-500">API Connected</span>
+            {currentStatus?.ready ? (
+              <span className="text-emerald-500">{currentPlatform.label} Connected</span>
             ) : (
               <span className="text-amber-500">Configuration Needed</span>
             )}
@@ -541,4 +837,3 @@ const AcquisitionModal: React.FC<AcquisitionModalProps> = ({
 };
 
 export default AcquisitionModal;
-

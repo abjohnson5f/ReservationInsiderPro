@@ -310,7 +310,7 @@ Please update the host notes accordingly. Thank you.`;
           </div>
           <div>
             <h3 className="text-lg font-bold text-white">Snipe a Reservation</h3>
-            <p className="text-xs text-amber-100/70">Search, select, and book via Resy API in seconds</p>
+            <p className="text-xs text-amber-100/70">Book via Resy, OpenTable, SevenRooms, or Tock</p>
           </div>
         </div>
         <div className="flex items-center gap-2 text-white font-bold">
