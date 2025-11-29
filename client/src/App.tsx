@@ -7,7 +7,8 @@ import TrendChart from './components/TrendChart';
 import StrategyPanel from './components/StrategyPanel';
 import Notification from './components/Notification';
 import PortfolioManager from './components/PortfolioManager';
-import { City, Restaurant, MarketInsight, ChartDataPoint, PortfolioItem } from './types';
+import SniperTicker from './components/SniperTicker';
+import { City, Restaurant, MarketInsight, ChartDataPoint, PortfolioItem } from '../types';
 import { fetchTopRestaurants, fetchMarketInsight, generateTrendData } from './services/geminiService';
 import { Globe, Radar, SearchX, LayoutDashboard, LineChart } from 'lucide-react';
 
@@ -205,6 +206,17 @@ const App: React.FC = () => {
   // --- PORTFOLIO ACTIONS ---
 
   const handleAddToPortfolio = (restaurant: Restaurant) => {
+    // Attempt to capture drop time if we have intelligence on this target
+    let capturedDropTime: string | undefined = undefined;
+    let capturedDropDate: string | undefined = undefined;
+    let capturedDropTimezone: string | undefined = undefined;
+    
+    if (selectedRestaurant?.name === restaurant.name && insight) {
+        capturedDropTime = insight.nextDropTime || insight.releaseTime;
+        capturedDropDate = insight.nextDropDate;
+        capturedDropTimezone = insight.dropTimezone;
+    }
+
     const newItem: PortfolioItem = {
       id: Math.random().toString(36).substr(2, 9),
       restaurantName: restaurant.name,
@@ -214,13 +226,22 @@ const App: React.FC = () => {
       costBasis: 0, // User needs to update this
       listPrice: restaurant.estimatedResaleValue,
       status: 'WATCHING', // Default status for tracked market signals
-      platform: 'Unknown'
+      platform: 'Unknown',
+      dropTime: capturedDropTime,
+      nextDropDate: capturedDropDate,
+      nextDropTime: capturedDropTime,
+      dropTimezone: capturedDropTimezone
     };
 
     setPortfolioItems(prev => [newItem, ...prev]);
+    
+    const dropInfo = capturedDropDate 
+        ? `(Next Drop: ${capturedDropDate} at ${capturedDropTime})` 
+        : capturedDropTime ? `(Drop: ${capturedDropTime})` : '';
+    
     setNotification({
       visible: true,
-      message: `Tracking ${restaurant.name} in Watchlist`,
+      message: `Tracking ${restaurant.name} in Watchlist ${dropInfo}`,
       type: 'success'
     });
   };
@@ -248,10 +269,13 @@ const App: React.FC = () => {
   };
   
   const pendingCount = portfolioItems.filter(i => i.status === 'PENDING').length;
+  const activeValue = portfolioItems
+    .filter(i => i.status === 'LISTED' || i.status === 'ACQUIRED')
+    .reduce((acc, i) => acc + i.listPrice, 0);
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col text-slate-200 font-sans">
-      <Header />
+      <Header portfolioValue={activeValue} />
       
       <main className="max-w-7xl w-full mx-auto px-4 py-6">
         
@@ -388,6 +412,7 @@ const App: React.FC = () => {
                         <StrategyPanel 
                             insight={insight} 
                             restaurantName={selectedRestaurant.name}
+                            description={selectedRestaurant.description}
                             loading={loadingInsight}
                         />
                     </>
@@ -411,6 +436,12 @@ const App: React.FC = () => {
         isVisible={notification.visible} 
         type={notification.type === 'success' ? 'info' : notification.type as any} // simple mapping
         onClose={() => setNotification(prev => ({ ...prev, visible: false }))} 
+      />
+
+      {/* Persistent Sniper Ticker */}
+      <SniperTicker 
+        items={portfolioItems} 
+        onAlert={(msg) => setNotification({ visible: true, message: msg, type: 'warning' })} 
       />
     </div>
   );

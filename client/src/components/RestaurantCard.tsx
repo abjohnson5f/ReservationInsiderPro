@@ -47,13 +47,13 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, isSelected,
           : 'bg-slate-900 border-slate-800 hover:border-slate-600 hover:bg-slate-800/50'}
       `}
     >
-      <div className="flex justify-between items-start mb-3">
-        <div className="flex-1 pr-4">
-          <div className="flex items-center gap-2 mb-1">
-             <h3 className="text-lg font-bold text-white group-hover:text-amber-500 transition-colors truncate">{restaurant.name}</h3>
-             {restaurant.popularityScore > 90 && <Flame className="w-4 h-4 text-orange-500 animate-pulse shrink-0" />}
+      <div className="flex justify-between items-start mb-3 gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start gap-2 mb-1">
+             <h3 className="text-lg font-bold text-white group-hover:text-amber-500 transition-colors leading-tight">{restaurant.name}</h3>
+             {restaurant.popularityScore > 90 && <Flame className="w-4 h-4 text-orange-500 animate-pulse shrink-0 mt-1" />}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap mt-1">
             <p className="text-xs text-slate-400 uppercase tracking-wide font-medium">{restaurant.cuisine}</p>
             {restaurant.sources && restaurant.sources.length > 0 && (
                 <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-800/50 border border-slate-700/50">
@@ -69,13 +69,13 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, isSelected,
             )}
           </div>
         </div>
-        <div className="text-right shrink-0">
-            <div className="flex items-center justify-end gap-1" title={`Market Trend: ${restaurant.trend}`}>
+        <div className="text-right shrink-0 min-w-[120px]">
+            <div className="flex items-center justify-end gap-1 mb-1" title={`Market Trend: ${restaurant.trend}`}>
                 {getTrendIcon(restaurant.trend)}
-                <span className="text-xl font-mono font-bold text-white">${restaurant.estimatedResaleValue}</span>
+                <span className="text-2xl font-mono font-bold text-white tabular-nums">${restaurant.estimatedResaleValue}</span>
             </div>
-            <div className="flex items-center justify-end gap-1 relative">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Est. Avg Resale</span>
+            <div className="flex items-center justify-end gap-1">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider whitespace-nowrap">Est. Avg Resale</span>
                 <div className="group/tooltip relative">
                     <Info className="w-3 h-3 text-slate-600 hover:text-slate-400 cursor-help" />
                     <div className="absolute right-0 bottom-full mb-2 w-48 bg-slate-950 border border-slate-800 p-2 rounded shadow-xl text-[10px] text-slate-300 z-10 hidden group-hover/tooltip:block pointer-events-none">
@@ -85,7 +85,7 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, isSelected,
             </div>
             {/* Price Range Indicator */}
             {(restaurant.priceLow !== undefined && restaurant.priceHigh !== undefined) && (
-                <div className="text-[10px] text-slate-400 mt-1 font-mono">
+                <div className="text-[10px] text-slate-400 mt-1 font-mono tabular-nums">
                     ${restaurant.priceLow} - ${restaurant.priceHigh}
                 </div>
             )}

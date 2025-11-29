@@ -1,6 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
-import { PortfolioItem, AssetStatus } from '../types';
+import { PortfolioItem, AssetStatus } from '../../types';
+import AcquisitionModal from './AcquisitionModal';
+import IdentityManager from './IdentityManager';
+import TransferTracker from './TransferTracker';
 import { 
   Briefcase, 
   DollarSign, 
@@ -16,7 +19,12 @@ import {
   Copy,
   HelpCircle,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Crosshair,
+  Zap,
+  Target,
+  Users,
+  Package
 } from 'lucide-react';
 
 interface PortfolioManagerProps {
@@ -27,17 +35,40 @@ interface PortfolioManagerProps {
 }
 
 const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem, onAddItem, onDeleteItem }) => {
+  // Tab State
+  const [activeTab, setActiveTab] = useState<'portfolio' | 'identities' | 'transfers'>('portfolio');
+  
+  // Notification for child components
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  
   const [selectedItem, setSelectedItem] = useState<PortfolioItem | null>(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSoldModal, setShowSoldModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showOverrideWarning, setShowOverrideWarning] = useState(false);
+  const [itemToOverride, setItemToOverride] = useState<PortfolioItem | null>(null);
   const [soldPriceInput, setSoldPriceInput] = useState<number>(0);
   const [itemToSell, setItemToSell] = useState<PortfolioItem | null>(null);
   const [itemToDelete, setItemToDelete] = useState<PortfolioItem | null>(null);
   
   // State for dropdowns
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  
+  // Acquisition Modal State
+  const [showAcquisitionModal, setShowAcquisitionModal] = useState(false);
+  const [acquisitionTarget, setAcquisitionTarget] = useState<{
+    name?: string;
+    date?: string;
+    time?: string;
+    guests?: number;
+  }>({});
+  
+  // Handle notifications from child components
+  const handleNotify = (message: string, type: 'success' | 'error' | 'info') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
 
   // Form State for New Asset
   const [newAsset, setNewAsset] = useState<Partial<PortfolioItem>>({
@@ -48,7 +79,8 @@ const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem
     costBasis: 0,
     listPrice: 0,
     platform: 'Resy',
-    status: 'ACQUIRED'
+    status: 'ACQUIRED',
+    dropTime: ''
   });
 
   // Stats Calculation
@@ -135,7 +167,8 @@ const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem
       costBasis: newAsset.costBasis || 0,
       listPrice: newAsset.listPrice || 0,
       platform: newAsset.platform || 'Resy',
-      status: 'ACQUIRED' // Default for new log
+      status: 'ACQUIRED', // Default for new log
+      dropTime: newAsset.dropTime || undefined
     };
 
     onAddItem(asset);
@@ -149,7 +182,8 @@ const PortfolioManager: React.FC<PortfolioManagerProps> = ({ items, onUpdateItem
       costBasis: 0,
       listPrice: 0,
       platform: 'Resy',
-      status: 'ACQUIRED'
+      status: 'ACQUIRED',
+      dropTime: ''
     });
   };
 
@@ -174,6 +208,65 @@ Please update the host notes accordingly. Thank you.`;
 
   return (
     <div className="space-y-6" onClick={() => setOpenDropdownId(null)}>
+      {/* Notification Toast */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-top-2 duration-200 ${
+          notification.type === 'success' ? 'bg-emerald-600 text-white' :
+          notification.type === 'error' ? 'bg-red-600 text-white' :
+          'bg-slate-700 text-white'
+        }`}>
+          {notification.message}
+        </div>
+      )}
+      
+      {/* Tab Navigation */}
+      <div className="flex gap-2 bg-slate-900/50 p-1 rounded-xl border border-slate-800">
+        <button
+          onClick={() => setActiveTab('portfolio')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'portfolio'
+              ? 'bg-slate-800 text-white shadow-lg'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Briefcase className="w-4 h-4" />
+          Portfolio
+        </button>
+        <button
+          onClick={() => setActiveTab('identities')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'identities'
+              ? 'bg-violet-600 text-white shadow-lg'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          Identities
+        </button>
+        <button
+          onClick={() => setActiveTab('transfers')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'transfers'
+              ? 'bg-amber-600 text-white shadow-lg'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          Transfers & AT
+        </button>
+      </div>
+
+      {/* Conditionally render based on active tab */}
+      {activeTab === 'identities' && (
+        <IdentityManager onNotify={handleNotify} />
+      )}
+      
+      {activeTab === 'transfers' && (
+        <TransferTracker onNotify={handleNotify} />
+      )}
+      
+      {activeTab === 'portfolio' && (
+      <>
       {/* Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex flex-col">
@@ -203,6 +296,26 @@ Please update the host notes accordingly. Thank you.`;
                 <Plus className="w-6 h-6 text-emerald-500 mb-1 group-hover:scale-110 transition-transform" />
                 <span className="text-xs font-bold text-emerald-400">LOG NEW ASSET</span>
             </div>
+        </div>
+      </div>
+
+      {/* SNIPE NOW - Primary Action Button */}
+      <div 
+        onClick={(e) => { e.stopPropagation(); setAcquisitionTarget({}); setShowAcquisitionModal(true); }}
+        className="bg-gradient-to-r from-amber-600 to-orange-600 p-4 rounded-xl flex items-center justify-between cursor-pointer hover:from-amber-500 hover:to-orange-500 transition-all shadow-lg shadow-amber-900/30 group"
+      >
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-black/20 rounded-lg">
+            <Target className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-white">Snipe a Reservation</h3>
+            <p className="text-xs text-amber-100/70">Search, select, and book via Resy API in seconds</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-white font-bold">
+          <Zap className="w-5 h-5 group-hover:animate-pulse" />
+          LAUNCH
         </div>
       </div>
 
@@ -246,7 +359,31 @@ Please update the host notes accordingly. Thank you.`;
                 <tr key={item.id} className="hover:bg-slate-800/50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-bold text-white">{item.restaurantName}</div>
-                    <div className="text-xs opacity-60">{item.platform}</div>
+                    <div className="text-xs opacity-60 mb-1">{item.platform}</div>
+                    {/* Editable Drop Time for Sniper */}
+                    <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <Crosshair className="w-3 h-3 text-amber-500" />
+                        <span>DROP:</span>
+                        <input 
+                            type="time" 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                // Show warning if AI has already calculated drop time
+                                if (item.nextDropDate && item.nextDropTime) {
+                                    setItemToOverride(item);
+                                    setShowOverrideWarning(true);
+                                }
+                            }}
+                            className="bg-transparent border-b border-slate-800 hover:border-amber-500 w-14 text-amber-400 focus:outline-none p-0 h-4"
+                            value={item.dropTime || item.nextDropTime || ''}
+                            onChange={(e) => {
+                                // Only allow direct edit if no AI data exists
+                                if (!item.nextDropDate) {
+                                    onUpdateItem({...item, dropTime: e.target.value});
+                                }
+                            }}
+                        />
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
@@ -304,6 +441,25 @@ Please update the host notes accordingly. Thank you.`;
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                        {/* Snipe button for WATCHING items */}
+                        {item.status === 'WATCHING' && (
+                            <button 
+                                onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    setAcquisitionTarget({
+                                        name: item.restaurantName,
+                                        date: item.nextDropDate || item.date,
+                                        time: item.nextDropTime || item.time,
+                                        guests: item.guests
+                                    });
+                                    setShowAcquisitionModal(true);
+                                }}
+                                className="text-xs bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded font-bold flex items-center gap-1 shadow-lg shadow-amber-900/30 transition-all"
+                            >
+                                <Zap className="w-3 h-3" />
+                                SNIPE
+                            </button>
+                        )}
                         {item.status === 'PENDING' && (
                             <button 
                                 onClick={(e) => { e.stopPropagation(); handleOpenTransfer(item); }}
@@ -465,6 +621,20 @@ Please update the host notes accordingly. Thank you.`;
                             </select>
                         </div>
                     </div>
+                    
+                    {/* Sniper Config */}
+                    <div>
+                         <label className="text-xs text-amber-500 font-bold uppercase mb-1 block flex items-center gap-1">
+                            <Crosshair className="w-3 h-3" /> Sniper Protocol (Drop Time)
+                         </label>
+                         <input 
+                            type="time" 
+                            className="w-full bg-slate-950 border border-amber-900/30 rounded px-3 py-2 text-amber-400 text-sm focus:ring-1 focus:ring-amber-500 outline-none [color-scheme:dark]"
+                            value={newAsset.dropTime}
+                            onChange={e => setNewAsset({...newAsset, dropTime: e.target.value})}
+                        />
+                        <p className="text-[10px] text-slate-500 mt-1">Set this to track liquidity release windows in the Sniper Ticker.</p>
+                    </div>
 
                     <div className="grid grid-cols-2 gap-4 pt-2">
                         <div>
@@ -558,6 +728,60 @@ Please update the host notes accordingly. Thank you.`;
           </div>
       )}
 
+      {/* Override Warning Modal */}
+      {showOverrideWarning && itemToOverride && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowOverrideWarning(false)}>
+            <div className="bg-slate-900 rounded-xl border border-amber-900/50 w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
+                <div className="p-5">
+                    <h3 className="font-bold text-white mb-2 flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-amber-500" />
+                        Override AI Drop Time?
+                    </h3>
+                    <p className="text-sm text-slate-400 mb-4 leading-relaxed">
+                        The AI has calculated the next drop for <strong className="text-white">{itemToOverride.restaurantName}</strong> as:
+                    </p>
+                    <div className="bg-slate-950 p-3 rounded border border-slate-800 mb-4 font-mono text-sm">
+                        <div className="text-amber-400">📅 {itemToOverride.nextDropDate}</div>
+                        <div className="text-amber-400">⏰ {itemToOverride.nextDropTime}</div>
+                        <div className="text-slate-500 text-xs mt-1">{itemToOverride.dropTimezone}</div>
+                    </div>
+                    <p className="text-xs text-red-400 mb-6 leading-relaxed">
+                        ⚠️ Manually overriding this may cause the Sniper Bot to trigger at the wrong time. Are you sure?
+                    </p>
+                    <div className="flex justify-end gap-3">
+                        <button 
+                            onClick={() => {
+                                setShowOverrideWarning(false);
+                                setItemToOverride(null);
+                            }}
+                            className="px-4 py-2 text-sm text-slate-400 hover:text-white"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={() => {
+                                // Clear AI data to allow manual editing
+                                if (itemToOverride) {
+                                    onUpdateItem({
+                                        ...itemToOverride,
+                                        nextDropDate: undefined,
+                                        nextDropTime: undefined,
+                                        dropTimezone: undefined
+                                    });
+                                }
+                                setShowOverrideWarning(false);
+                                setItemToOverride(null);
+                            }}
+                            className="px-6 py-2 text-sm bg-amber-600 hover:bg-amber-500 text-white rounded font-bold shadow-lg shadow-amber-900/20"
+                        >
+                            Override Anyway
+                        </button>
+                    </div>
+                </div>
+            </div>
+          </div>
+      )}
+
       {/* Delete Confirmation Modal */}
       {showDeleteModal && itemToDelete && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowDeleteModal(false)}>
@@ -590,6 +814,22 @@ Please update the host notes accordingly. Thank you.`;
                 </div>
             </div>
           </div>
+      )}
+
+      {/* Acquisition Modal */}
+      <AcquisitionModal
+        isOpen={showAcquisitionModal}
+        onClose={() => setShowAcquisitionModal(false)}
+        initialRestaurantName={acquisitionTarget.name}
+        initialDate={acquisitionTarget.date}
+        initialTime={acquisitionTarget.time}
+        initialGuests={acquisitionTarget.guests}
+        onSuccess={(result) => {
+          // Could add the reservation to portfolio automatically here
+          console.log('Acquisition successful:', result);
+        }}
+      />
+      </>
       )}
     </div>
   );

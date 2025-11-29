@@ -1,41 +1,78 @@
 import React, { useState, useEffect } from 'react';
 import { MarketInsight } from '../types';
-import { Sparkles, MonitorSmartphone, AlertTriangle, CalendarCheck, Globe, ExternalLink, Database, Server, Crosshair, Timer, Link2, Copy, CreditCard } from 'lucide-react';
+import { Sparkles, MonitorSmartphone, AlertTriangle, CalendarCheck, Globe, ExternalLink, Database, Server, Crosshair, Timer, Link2, Copy, CreditCard, Info } from 'lucide-react';
 
 interface StrategyPanelProps {
   insight: MarketInsight | null;
   restaurantName: string;
+  description?: string;
   loading: boolean;
 }
 
-const StrategyPanel: React.FC<StrategyPanelProps> = ({ insight, restaurantName, loading }) => {
+const StrategyPanel: React.FC<StrategyPanelProps> = ({ insight, restaurantName, description, loading }) => {
   const [timeLeft, setTimeLeft] = useState<string>('--:--:--');
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
 
-  // Countdown Logic
+  // Enhanced Countdown Logic with Full Date/Timezone Support
   useEffect(() => {
-    if (!insight?.releaseTime) return;
+    // Prefer new fields, fallback to old releaseTime for backwards compatibility
+    if (!insight?.nextDropDate && !insight?.releaseTime) return;
 
     const calculateTimeLeft = () => {
         const now = new Date();
-        const [hours, minutes] = insight.releaseTime!.split(':').map(Number);
-        
-        // Create date object for the next occurrence of this time
-        let target = new Date();
-        target.setHours(hours, minutes, 0, 0);
+        let target: Date;
 
-        // If target is in the past, move to tomorrow
-        if (target <= now) {
-            target.setDate(target.getDate() + 1);
+        if (insight.nextDropDate && insight.nextDropTime && insight.dropTimezone) {
+            // NEW: Use full date/time/timezone for accurate calculation
+            const dateTimeString = `${insight.nextDropDate}T${insight.nextDropTime}:00`;
+            
+            // Parse in the restaurant's timezone
+            target = new Date(dateTimeString);
+            
+            // Note: For true timezone conversion, we'd use a library like date-fns-tz
+            // For now, we'll use a simple offset mapping
+            const timezoneOffsets: Record<string, number> = {
+                'America/Los_Angeles': -8, // PST
+                'America/New_York': -5,    // EST
+                'America/Chicago': -6,     // CST
+                'Europe/London': 0,        // GMT
+                'Europe/Paris': 1,         // CET
+                'Asia/Tokyo': 9            // JST
+            };
+            
+            const offset = timezoneOffsets[insight.dropTimezone] || 0;
+            const localOffset = -now.getTimezoneOffset() / 60;
+            const hoursDiff = offset - localOffset;
+            
+            target.setHours(target.getHours() - hoursDiff);
+        } else {
+            // FALLBACK: Old logic for backwards compatibility
+            const [hours, minutes] = (insight.releaseTime || '09:00').split(':').map(Number);
+            target = new Date();
+            target.setHours(hours, minutes, 0, 0);
+            if (target <= now) {
+                target.setDate(target.getDate() + 1);
+            }
         }
 
         const diff = target.getTime() - now.getTime();
         
+        if (diff < 0) {
+            setTimeLeft('00:00:00');
+            return;
+        }
+        
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
         const h = Math.floor((diff / (1000 * 60 * 60)) % 24);
         const m = Math.floor((diff / (1000 * 60)) % 60);
         const s = Math.floor((diff / 1000) % 60);
 
-        setTimeLeft(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
+        // Show days if > 24 hours away
+        if (days > 0) {
+            setTimeLeft(`${days}d ${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
+        } else {
+            setTimeLeft(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
+        }
     };
 
     const timer = setInterval(calculateTimeLeft, 1000);
@@ -111,6 +148,22 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ insight, restaurantName, 
                             <Timer className="w-4 h-4 text-emerald-500 animate-pulse" />
                             {timeLeft}
                         </div>
+                        {/* Show actual drop date for context */}
+                        {insight.nextDropDate && insight.nextDropTime && (
+                            <span className="text-[9px] text-slate-500 mt-1.5 font-mono">
+                                {new Date(insight.nextDropDate + 'T12:00:00').toLocaleDateString('en-US', { 
+                                    weekday: 'short', 
+                                    month: 'short', 
+                                    day: 'numeric' 
+                                })} @ {insight.nextDropTime}
+                            </span>
+                        )}
+                        {/* Show release pattern if available */}
+                        {insight.dropPattern && (
+                            <span className="text-[9px] text-amber-500/70 mt-1 text-center leading-tight max-w-[160px]">
+                                {insight.dropPattern}
+                            </span>
+                        )}
                     </div>
 
                     {/* Direct Links */}
@@ -144,6 +197,16 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ insight, restaurantName, 
                 </div>
             </div>
         </div>
+
+        {/* Full Restaurant Description */}
+        {description && (
+          <div className="bg-slate-950/50 p-4 rounded-lg border border-slate-800">
+            <h4 className="text-xs text-slate-400 font-bold uppercase mb-2 flex items-center gap-2">
+              <Info className="w-3 h-3" /> About This Venue
+            </h4>
+            <p className="text-sm text-slate-300 leading-relaxed">{description}</p>
+          </div>
+        )}
 
         {/* Execution Plan */}
         <div className="bg-slate-950/50 p-4 rounded-lg border border-slate-800">

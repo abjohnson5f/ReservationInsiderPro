@@ -6,14 +6,12 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       server: {
-        port: 3000,
-        host: '0.0.0.0',
+        // Let Vite choose the port to avoid permission issues
+        // port: 3005, 
+        // host: '0.0.0.0', 
       },
       plugins: [react()],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
+      // Environment variables are automatically exposed via import.meta.env with VITE_ prefix
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
